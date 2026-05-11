@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "479970496626",
+    "project_id": "patientmonitor-4f0e8",
+    "storage_bucket": "patientmonitor-4f0e8.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:479970496626:android:88e04dfae5d1a3e78cf2eb",
+        "android_client_info": {
+          "package_name": "com.example.patient_monitor"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBEuTpnY3b4zKV80uREwxqT31v6JxxST4s"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
