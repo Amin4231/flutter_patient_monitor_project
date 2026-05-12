@@ -5,6 +5,9 @@ import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'firebase_options.dart';
 import 'dart:async';
+// ---- Phase 2 ----
+import 'history_page.dart';
+import 'storage.dart';
 
 // ============================================================================
 // NOTIFICATION SETUP
@@ -290,6 +293,9 @@ class _PatientPageState extends State<PatientPage> {
   final AudioPlayer audioPlayer = AudioPlayer();
   final ThresholdChecker _thresholdChecker = ThresholdChecker();
 
+  // ---- Phase 2: history storage ----
+  final HistoryStorage _historyStorage = HistoryStorage();
+
   int _localCountdown = 10;
   Timer? _countdownTimer;
 
@@ -409,6 +415,18 @@ class _PatientPageState extends State<PatientPage> {
         prevFallDetected = newFall;
         prevMedicineAlarm = newMedicine;
       });
+
+      // ---- Phase 2: save reading to history ----
+      if (newBpmSt && newBpm > 0) {
+        _historyStorage.saveReading('heart_rate', newBpm.toDouble());
+      }
+      if (newTempSt && newObjTemp > 0) {
+        _historyStorage.saveReading('temperature_object', newObjTemp);
+      }
+      if (ambientTemp > 0) {
+        _historyStorage.saveReading('temperature_ambient', ambientTemp);
+      }
+      _historyStorage.saveReading('footsteps', footsteps.toDouble());
 
       // ── Medicine timer ─────────────────────────────────────
       if (newMedicine && !newMedicineTaken && newMedicineTimestamp > 0) {
@@ -540,6 +558,7 @@ class _PatientPageState extends State<PatientPage> {
         padding: const EdgeInsets.all(16.0),
         child: ListView(
           children: [
+            // ---- Phase 2: added onTap to each SensorCard ----
             SensorCard(
               title: "Heart Beat",
               status: true,
@@ -551,6 +570,15 @@ class _PatientPageState extends State<PatientPage> {
               warningLow: kBpmLow.toDouble(),
               warningHigh: kBpmHigh.toDouble(),
               currentDouble: heartRate.toDouble(),
+              onTap: () {
+                Navigator.push(context, MaterialPageRoute(builder: (_) => HistoryPage(
+                  title: "Heart Rate",
+                  unit: "BPM",
+                  path: "heart_rate",
+                  color: Colors.red,
+                  lastUpdate: lastHeartRateUpdate,
+                )));
+              },
             ),
             SensorCard(
               title: "Object Temp",
@@ -563,6 +591,15 @@ class _PatientPageState extends State<PatientPage> {
               warningLow: kTempLow,
               warningHigh: kTempHigh,
               currentDouble: objectTemp,
+              onTap: () {
+                Navigator.push(context, MaterialPageRoute(builder: (_) => HistoryPage(
+                  title: "Object Temperature",
+                  unit: "°C",
+                  path: "temperature_object",
+                  color: Colors.orange,
+                  lastUpdate: lastTempUpdate,
+                )));
+              },
             ),
             SensorCard(
               title: "Ambient Temp",
@@ -572,6 +609,15 @@ class _PatientPageState extends State<PatientPage> {
               color: Colors.blue,
               unit: "°C",
               lastUpdate: lastTempUpdate,
+              onTap: () {
+                Navigator.push(context, MaterialPageRoute(builder: (_) => HistoryPage(
+                  title: "Ambient Temperature",
+                  unit: "°C",
+                  path: "temperature_ambient",
+                  color: Colors.blue,
+                  lastUpdate: lastTempUpdate,
+                )));
+              },
             ),
             SensorCard(
               title: "Footsteps",
@@ -581,6 +627,15 @@ class _PatientPageState extends State<PatientPage> {
               color: Colors.green,
               unit: "steps",
               lastUpdate: lastFootstepsUpdate,
+              onTap: () {
+                Navigator.push(context, MaterialPageRoute(builder: (_) => HistoryPage(
+                  title: "Footsteps",
+                  unit: "steps",
+                  path: "footsteps",
+                  color: Colors.green,
+                  lastUpdate: lastFootstepsUpdate,
+                )));
+              },
             ),
             FlagCard(
               title: "Fall Detected",
@@ -647,7 +702,7 @@ class _PatientPageState extends State<PatientPage> {
 }
 
 // ============================================================================
-// SENSOR CARD (ENHANCED)
+// SENSOR CARD (ENHANCED with onTap for Phase 2)
 // ============================================================================
 class SensorCard extends StatelessWidget {
   final String title;
@@ -660,6 +715,8 @@ class SensorCard extends StatelessWidget {
   final double? warningLow;
   final double? warningHigh;
   final double? currentDouble;
+  // ---- Phase 2: tap callback ----
+  final VoidCallback? onTap;
 
   const SensorCard({
     super.key,
@@ -673,6 +730,7 @@ class SensorCard extends StatelessWidget {
     this.warningLow,
     this.warningHigh,
     this.currentDouble,
+    this.onTap,   // Phase 2
   });
 
   bool get _isOutOfRange {
@@ -695,43 +753,48 @@ class SensorCard extends StatelessWidget {
         borderRadius: BorderRadius.circular(12),
       )
           : null,
-      child: ListTile(
-        leading: Icon(icon, color: outOfRange ? Colors.red : color, size: 32),
-        title: Row(
-          children: [
-            Text(title,
-                style: const TextStyle(fontWeight: FontWeight.bold)),
-            if (outOfRange)
-              const Padding(
-                padding: EdgeInsets.only(left: 6),
-                child:
-                Icon(Icons.warning_amber_rounded, size: 16, color: Colors.red),
-              ),
-          ],
-        ),
-        subtitle: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              status
-                  ? (value is double
-                  ? '${(value as double).toStringAsFixed(1)} $unit'
-                  : '$value $unit')
-                  : 'Sensor is off',
-              style: TextStyle(
-                color: outOfRange
-                    ? Colors.red
-                    : (status ? Colors.green : Colors.red),
-                fontSize: 16,
-                fontWeight: outOfRange ? FontWeight.bold : FontWeight.normal,
-              ),
-            ),
-            if (lastUpdate != null)
+      // ---- Phase 2: wrap ListTile with InkWell for tap ----
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: onTap,
+        child: ListTile(
+          leading: Icon(icon, color: outOfRange ? Colors.red : color, size: 32),
+          title: Row(
+            children: [
+              Text(title,
+                  style: const TextStyle(fontWeight: FontWeight.bold)),
+              if (outOfRange)
+                const Padding(
+                  padding: EdgeInsets.only(left: 6),
+                  child: Icon(Icons.warning_amber_rounded,
+                      size: 16, color: Colors.red),
+                ),
+            ],
+          ),
+          subtitle: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
               Text(
-                'Updated: ${_fmt(lastUpdate!)}',
-                style: TextStyle(fontSize: 11, color: Colors.grey.shade500),
+                status
+                    ? (value is double
+                    ? '${(value as double).toStringAsFixed(1)} $unit'
+                    : '$value $unit')
+                    : 'Sensor is off',
+                style: TextStyle(
+                  color: outOfRange
+                      ? Colors.red
+                      : (status ? Colors.green : Colors.red),
+                  fontSize: 16,
+                  fontWeight: outOfRange ? FontWeight.bold : FontWeight.normal,
+                ),
               ),
-          ],
+              if (lastUpdate != null)
+                Text(
+                  'Updated: ${_fmt(lastUpdate!)}',
+                  style: TextStyle(fontSize: 11, color: Colors.grey.shade500),
+                ),
+            ],
+          ),
         ),
       ),
     );
@@ -744,7 +807,7 @@ class SensorCard extends StatelessWidget {
 }
 
 // ============================================================================
-// FLAG CARD (ENHANCED)
+// FLAG CARD (unchanged)
 // ============================================================================
 class FlagCard extends StatelessWidget {
   final String title;

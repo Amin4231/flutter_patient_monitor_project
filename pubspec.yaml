@@ -39,6 +39,7 @@ dependencies:
   cloud_firestore: ^6.1.2
   audioplayers: ^6.6.0     # the latest update**
   flutter_local_notifications: ^17.0.0
+  fl_chart: ^0.68.0
 
 
 dev_dependencies:
