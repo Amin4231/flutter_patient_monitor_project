@@ -7,29 +7,29 @@ import 'package:firebase_database/firebase_database.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'firebase_options.dart';
 import 'history_page.dart';
-import 'alerts_page.dart';   // ← MAKE SURE THIS LINE EXISTS
 import 'storage.dart';
+import 'alerts_page.dart';
 
 // ======================= NOTIFICATION SETUP =======================
 final FlutterLocalNotificationsPlugin notificationsPlugin =
 FlutterLocalNotificationsPlugin();
 
-const String kNotificationChannelId   = 'mediguard_alerts';
+const String kNotificationChannelId = 'mediguard_alerts';
 const String kNotificationChannelName = 'MediGuard Alerts';
 const String kNotificationChannelDesc = 'Vital signs and alarm notifications';
 
-const int kBpmLow      = 60;
-const int kBpmHigh     = 100;
-const double kTempLow  = 35.0;
+const int kBpmLow = 60;
+const int kBpmHigh = 100;
+const double kTempLow = 35.0;
 const double kTempHigh = 37.5;
 
-const int kNotifIdHeartRateLow  = 1;
+const int kNotifIdHeartRateLow = 1;
 const int kNotifIdHeartRateHigh = 2;
-const int kNotifIdTempHigh      = 3;
-const int kNotifIdTempLow       = 4;
-const int kNotifIdFall          = 5;
-const int kNotifIdMedicine      = 6;
-const int kNotifIdEmergency     = 7;
+const int kNotifIdTempHigh = 3;
+const int kNotifIdTempLow = 4;
+const int kNotifIdFall = 5;
+const int kNotifIdMedicine = 6;
+const int kNotifIdEmergency = 7;
 
 // ======================= MAIN =======================
 void main() async {
@@ -61,6 +61,7 @@ Future<void> _sendNotification({
   required String title,
   required String body,
   bool highPriority = false,
+  String type = 'general',
 }) async {
   final AndroidNotificationDetails androidDetails = AndroidNotificationDetails(
     kNotificationChannelId,
@@ -77,12 +78,16 @@ Future<void> _sendNotification({
     presentBadge: true,
     presentSound: true,
   );
+
   await notificationsPlugin.show(
     id,
     title,
     body,
     NotificationDetails(android: androidDetails, iOS: iosDetails),
   );
+
+  final storage = HistoryStorage();
+  await storage.saveNotification(type: type, title: title, body: body);
 }
 
 // ======================= THRESHOLD CHECKER =======================
@@ -101,53 +106,61 @@ class ThresholdChecker {
     required bool emergencyAlarm,
   }) async {
     if (bpmActive && bpm > 0) {
-      final nowLow  = bpm < kBpmLow;
+      final nowLow = bpm < kBpmLow;
       final nowHigh = bpm > kBpmHigh;
+
       if (nowLow && !_prevBpmLow) {
         await _sendNotification(
             id: kNotifIdHeartRateLow,
             title: '⚠️ Heart Rate Low',
             body: 'BPM $bpm < $kBpmLow',
-            highPriority: true);
+            highPriority: true,
+            type: 'heart_rate_low');
       } else if (!nowLow && _prevBpmLow) {
         await notificationsPlugin.cancel(kNotifIdHeartRateLow);
       }
+
       if (nowHigh && !_prevBpmHigh) {
         await _sendNotification(
             id: kNotifIdHeartRateHigh,
             title: '⚠️ Heart Rate High',
             body: 'BPM $bpm > $kBpmHigh',
-            highPriority: true);
+            highPriority: true,
+            type: 'heart_rate_high');
       } else if (!nowHigh && _prevBpmHigh) {
         await notificationsPlugin.cancel(kNotifIdHeartRateHigh);
       }
-      _prevBpmLow  = nowLow;
+      _prevBpmLow = nowLow;
       _prevBpmHigh = nowHigh;
     }
 
     if (tempActive && objectTemp > 0) {
       final nowHigh = objectTemp > kTempHigh;
-      final nowLow  = objectTemp < kTempLow;
+      final nowLow = objectTemp < kTempLow;
+
       if (nowHigh && !_prevTempHigh) {
         await _sendNotification(
             id: kNotifIdTempHigh,
             title: '🌡️ High Temperature',
             body: '${objectTemp.toStringAsFixed(1)}°C > $kTempHigh°C',
-            highPriority: true);
+            highPriority: true,
+            type: 'temp_high');
       } else if (!nowHigh && _prevTempHigh) {
         await notificationsPlugin.cancel(kNotifIdTempHigh);
       }
+
       if (nowLow && !_prevTempLow) {
         await _sendNotification(
             id: kNotifIdTempLow,
             title: '🌡️ Low Temperature',
             body: '${objectTemp.toStringAsFixed(1)}°C < $kTempLow°C',
-            highPriority: true);
+            highPriority: true,
+            type: 'temp_low');
       } else if (!nowLow && _prevTempLow) {
         await notificationsPlugin.cancel(kNotifIdTempLow);
       }
       _prevTempHigh = nowHigh;
-      _prevTempLow  = nowLow;
+      _prevTempLow = nowLow;
     }
 
     if (fallDetected && !_prevFall) {
@@ -155,7 +168,8 @@ class ThresholdChecker {
           id: kNotifIdFall,
           title: '🆘 Fall Detected!',
           body: 'Patient may have fallen.',
-          highPriority: true);
+          highPriority: true,
+          type: 'fall');
     }
     _prevFall = fallDetected;
 
@@ -163,7 +177,8 @@ class ThresholdChecker {
       await _sendNotification(
           id: kNotifIdMedicine,
           title: '💊 Medicine Time',
-          body: 'Please take your medicine');
+          body: 'Please take your medicine',
+          type: 'medicine');
     } else if (!medicineAlarm && _prevMedicine) {
       await notificationsPlugin.cancel(kNotifIdMedicine);
     }
@@ -174,14 +189,14 @@ class ThresholdChecker {
           id: kNotifIdEmergency,
           title: '🚨 Emergency SOS!',
           body: 'Patient triggered SOS button!',
-          highPriority: true);
+          highPriority: true,
+          type: 'emergency');
     }
     _prevEmergency = emergencyAlarm;
   }
 }
 
 // ======================= APP ROOT =======================
-// FIX 1: _themeMode state + toggleTheme() instead of ThemeMode.system
 class MediGuardApp extends StatefulWidget {
   const MediGuardApp({super.key});
 
@@ -190,12 +205,11 @@ class MediGuardApp extends StatefulWidget {
 }
 
 class _MediGuardAppState extends State<MediGuardApp> {
-  ThemeMode _themeMode = ThemeMode.light; // FIX 1: default light
+  ThemeMode _themeMode = ThemeMode.light;
 
   void toggleTheme() {
     setState(() {
-      _themeMode =
-      _themeMode == ThemeMode.light ? ThemeMode.dark : ThemeMode.light;
+      _themeMode = _themeMode == ThemeMode.light ? ThemeMode.dark : ThemeMode.light;
     });
   }
 
@@ -218,15 +232,15 @@ class _MediGuardAppState extends State<MediGuardApp> {
         fontFamily: 'Roboto',
         useMaterial3: true,
       ),
-      themeMode: _themeMode, // FIX 1: use state, not ThemeMode.system
-      home: PatientDashboard(onToggleTheme: toggleTheme), // FIX 1: pass down
+      themeMode: _themeMode,
+      home: PatientDashboard(onToggleTheme: toggleTheme),
     );
   }
 }
 
 // ======================= MAIN DASHBOARD =======================
 class PatientDashboard extends StatefulWidget {
-  final VoidCallback onToggleTheme; // FIX 1: accept callback
+  final VoidCallback onToggleTheme;
 
   const PatientDashboard({super.key, required this.onToggleTheme});
 
@@ -260,15 +274,12 @@ class _PatientDashboardState extends State<PatientDashboard> {
   bool _isAlarmPlaying = false;
   bool _hasEscalatedMedicineAlarm = false;
 
-  int _currentTabIndex = 0;
-
   @override
   void initState() {
     super.initState();
     final database = FirebaseDatabase.instanceFor(
       app: Firebase.app(),
-      databaseURL:
-      'https://patientmonitor-4f0e8-default-rtdb.europe-west1.firebasedatabase.app',
+      databaseURL: 'https://patientmonitor-4f0e8-default-rtdb.europe-west1.firebasedatabase.app',
     );
     dbRef = database.ref('patient_1/live_data');
 
@@ -276,27 +287,23 @@ class _PatientDashboardState extends State<PatientDashboard> {
       final data = event.snapshot.value as Map<dynamic, dynamic>?;
       if (data == null) return;
 
-      bool newFall             = data['fall_detected']    ?? false;
-      bool newMedicine         = data['medicine_alarm']   ?? false;
-      bool newMedicineTaken    = data['medicine_taken']   ?? false;
-      int  newMedicineTimestamp = data['medicine_timestamp'] ?? 0;
-      bool newEmergency        = data['emergency_alarm']  ?? false;
+      bool newFall = data['fall_detected'] ?? false;
+      bool newMedicine = data['medicine_alarm'] ?? false;
+      bool newMedicineTaken = data['medicine_taken'] ?? false;
+      int newMedicineTimestamp = data['medicine_timestamp'] ?? 0;
+      bool newEmergency = data['emergency_alarm'] ?? false;
 
-      int    newBpm       = data['heart_beat']?['value'] ?? 0;
-      bool   newBpmSt     = data['heart_beat']?['status'] ?? false;
-      double newObjTemp   =
-          (data['temperature']?['object']?['value'] as num?)?.toDouble() ?? 0.0;
-      bool   newTempSt    = data['temperature']?['object']?['status'] ?? false;
-      double newAmbientTemp =
-          (data['temperature']?['ambient']?['value'] as num?)?.toDouble() ?? 0.0;
-      bool   newAmbientSt = data['temperature']?['ambient']?['status'] ?? false;
+      int newBpm = data['heart_beat']?['value'] ?? 0;
+      bool newBpmSt = data['heart_beat']?['status'] ?? false;
+      double newObjTemp = (data['temperature']?['object']?['value'] as num?)?.toDouble() ?? 0.0;
+      bool newTempSt = data['temperature']?['object']?['status'] ?? false;
+      double newAmbientTemp = (data['temperature']?['ambient']?['value'] as num?)?.toDouble() ?? 0.0;
+      bool newAmbientSt = data['temperature']?['ambient']?['status'] ?? false;
 
-      // Audio triggers
       if (newFall && !prevFallDetected) await _playAlarmOnceFalling();
       if (newMedicine && !prevMedicineAlarm) await _playAlarmOnceStart();
       if (newEmergency && !emergencyAlarm) await _playAlarmOnceEmergency();
 
-      // Notification thresholds
       await _thresholdChecker.check(
         bpm: newBpm,
         bpmActive: newBpmSt,
@@ -310,61 +317,44 @@ class _PatientDashboardState extends State<PatientDashboard> {
       final now = DateTime.now();
       setState(() {
         heartRateStatus = newBpmSt;
-        heartRate       = newBpm;
+        heartRate = newBpm;
         if (heartRateStatus) lastHeartRate = heartRate;
         if (newBpmSt) lastHeartRateUpdate = now;
 
-        objectTempStatus  = newTempSt;
-        objectTemp        = newObjTemp;
+        objectTempStatus = newTempSt;
+        objectTemp = newObjTemp;
         ambientTempStatus = newAmbientSt;
-        ambientTemp       = newAmbientTemp;
+        ambientTemp = newAmbientTemp;
         if (newTempSt) lastTempUpdate = now;
 
-        footsteps           = data['footsteps']?['value'] ?? 0;
+        footsteps = data['footsteps']?['value'] ?? 0;
         lastFootstepsUpdate = now;
 
-        fallDetected       = newFall;
-        medicineAlarm      = newMedicine;
-        medicineTaken      = newMedicineTaken;
-        medicineTimestamp  = newMedicineTimestamp;
-        emergencyAlarm     = newEmergency;
+        fallDetected = newFall;
+        medicineAlarm = newMedicine;
+        medicineTaken = newMedicineTaken;
+        medicineTimestamp = newMedicineTimestamp;
+        emergencyAlarm = newEmergency;
 
-        if (newFall)      lastFallUpdate      = now;
-        if (newMedicine)  lastMedicineUpdate  = now;
+        if (newFall) lastFallUpdate = now;
+        if (newMedicine) lastMedicineUpdate = now;
         if (newEmergency) lastEmergencyUpdate = now;
 
-        prevFallDetected  = newFall;
+        prevFallDetected = newFall;
         prevMedicineAlarm = newMedicine;
       });
 
-      // History logging
-      if (newBpmSt && newBpm > 0) {
-        _historyStorage.saveReading('heart_rate', newBpm.toDouble());
-      }
-      if (newTempSt && newObjTemp > 0) {
-        _historyStorage.saveReading('temperature_object', newObjTemp);
-      }
-      if (newAmbientSt && newAmbientTemp > 0) {
-        _historyStorage.saveReading('temperature_ambient', newAmbientTemp);
-      }
+      if (newBpmSt && newBpm > 0) _historyStorage.saveReading('heart_rate', newBpm.toDouble());
+      if (newTempSt && newObjTemp > 0) _historyStorage.saveReading('temperature_object', newObjTemp);
+      if (newAmbientSt && newAmbientTemp > 0) _historyStorage.saveReading('temperature_ambient', newAmbientTemp);
       _historyStorage.saveReading('footsteps', footsteps.toDouble());
 
-      if (newFall && !prevFallDetected) {
-        _historyStorage.saveFallEvent();
-      }
+      if (newFall && !prevFallDetected) _historyStorage.saveFallEvent();
+      if (newMedicine && !prevMedicineAlarm) _historyStorage.saveReading('medicine_alarm', 1.0);
+      if (newEmergency && !emergencyAlarm) _historyStorage.saveReading('emergency_alarm', 1.0);
 
-      // FIX 4: Log medicine and emergency events to history
-      if (newMedicine && !prevMedicineAlarm) {
-        _historyStorage.saveReading('medicine_alarm', 1.0);
-      }
-      if (newEmergency && !emergencyAlarm) {
-        _historyStorage.saveReading('emergency_alarm', 1.0);
-      }
-
-      // Medicine countdown
       if (newMedicine && !newMedicineTaken && newMedicineTimestamp > 0) {
-        if ((_countdownTimer == null || !_countdownTimer!.isActive) &&
-            !_hasEscalatedMedicineAlarm) {
+        if ((_countdownTimer == null || !_countdownTimer!.isActive) && !_hasEscalatedMedicineAlarm) {
           _startCountdownTimer();
         }
       } else {
@@ -377,48 +367,39 @@ class _PatientDashboardState extends State<PatientDashboard> {
     });
   }
 
-  // ======================= AUDIO METHODS =======================
+  // ======================= AUDIO =======================
   Future<void> _playAlarmOnceFalling() async {
     if (!_isAlarmPlaying) {
       _isAlarmPlaying = true;
-      try {
-        await audioPlayer.play(AssetSource('fall_emergency.mp3'));
-        _isAlarmPlaying = false;
-      } catch (_) {}
+      try { await audioPlayer.play(AssetSource('fall_emergency.mp3')); } catch (_) {}
+      _isAlarmPlaying = false;
     }
   }
 
   Future<void> _playAlarmOnceStart() async {
     if (!_isAlarmPlaying) {
       _isAlarmPlaying = true;
-      try {
-        await audioPlayer.play(AssetSource('starting.mp3'));
-        _isAlarmPlaying = false;
-      } catch (_) {}
+      try { await audioPlayer.play(AssetSource('starting.mp3')); } catch (_) {}
+      _isAlarmPlaying = false;
     }
   }
 
   Future<void> _playAlarmOnceMissed() async {
     if (!_isAlarmPlaying) {
       _isAlarmPlaying = true;
-      try {
-        await audioPlayer.play(AssetSource('medicine_missed.mp3'));
-        _isAlarmPlaying = false;
-      } catch (_) {}
+      try { await audioPlayer.play(AssetSource('medicine_missed.mp3')); } catch (_) {}
+      _isAlarmPlaying = false;
     }
   }
 
   Future<void> _playAlarmOnceEmergency() async {
     if (!_isAlarmPlaying) {
       _isAlarmPlaying = true;
-      try {
-        await audioPlayer.play(AssetSource('emergency.mp3'));
-        _isAlarmPlaying = false;
-      } catch (_) {}
+      try { await audioPlayer.play(AssetSource('emergency.mp3')); } catch (_) {}
+      _isAlarmPlaying = false;
     }
   }
 
-  // ======================= COUNTDOWN TIMER =======================
   void _startCountdownTimer() {
     _localCountdown = 10;
     _countdownTimer?.cancel();
@@ -465,197 +446,162 @@ class _PatientDashboardState extends State<PatientDashboard> {
     super.dispose();
   }
 
-  // ======================= BUILD =======================
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
+
     return Scaffold(
       body: SafeArea(
-        child: _currentTabIndex == 0
-            ? _buildDashboard(isDark)
-            : _buildAlertsView(), // FIX 5: pass live flags
-      ),
-      bottomNavigationBar: _buildBottomNav(isDark),
-    );
-  }
-
-  // ----- Dashboard -----
-  Widget _buildDashboard(bool isDark) {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-      child: Column(
-        children: [
-          // FIX 1: top row now has the theme toggle button
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          child: Column(
             children: [
-              Text(
-                'MediGuard',
-                style: TextStyle(
-                    fontSize: 24,
-                    fontWeight: FontWeight.w700,
-                    color: isDark ? Colors.white : Colors.black87),
-              ),
               Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  // FIX 1: Dark/Light toggle button
+                  Text(
+                    'MediGuard',
+                    style: TextStyle(
+                      fontSize: 24,
+                      fontWeight: FontWeight.w700,
+                      color: isDark ? Colors.white : Colors.black87,
+                    ),
+                  ),
                   IconButton(
                     icon: Icon(
                       isDark ? Icons.wb_sunny_outlined : Icons.brightness_6,
                       color: isDark ? Colors.white70 : Colors.black54,
                     ),
-                    tooltip: 'Toggle theme',
                     onPressed: widget.onToggleTheme,
-                  ),
-                  IconButton(
-                    icon: Icon(Icons.settings_outlined,
-                        color: isDark ? Colors.white70 : Colors.black54),
-                    onPressed: () {},
                   ),
                 ],
               ),
-            ],
-          ),
-          const SizedBox(height: 8),
+              const SizedBox(height: 12),
 
-          // FIX 2: Heart rate widget is now tappable
-          GestureDetector(
-            onTap: () => Navigator.push(
-              context,
-              MaterialPageRoute(
-                builder: (_) => HistoryPage(
-                  title: 'Heart Rate',
-                  unit: 'BPM',
-                  path: 'heart_rate',
-                  color: const Color(0xFF2EE59D),
-                  lastUpdate: lastHeartRateUpdate,
-                  lowThreshold: kBpmLow.toDouble(),
-                  highThreshold: kBpmHigh.toDouble(),
-                  currentValue: heartRateStatus ? heartRate.toDouble() : null,
+              GestureDetector(
+                onTap: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => HistoryPage(
+                      title: 'Heart Rate',
+                      unit: 'BPM',
+                      path: 'heart_rate',
+                      color: const Color(0xFF2EE59D),
+                      lastUpdate: lastHeartRateUpdate,
+                      lowThreshold: kBpmLow.toDouble(),
+                      highThreshold: kBpmHigh.toDouble(),
+                      currentValue: heartRateStatus ? heartRate.toDouble() : null,
+                    ),
+                  ),
+                ),
+                child: _CircularHeartRate(
+                  bpm: heartRateStatus ? heartRate : lastHeartRate,
+                  isActive: heartRateStatus,
+                  isAbnormal: heartRateStatus && (heartRate < kBpmLow || heartRate > kBpmHigh),
                 ),
               ),
-            ),
-            child: _CircularHeartRate(
-              bpm: heartRateStatus ? heartRate : lastHeartRate,
-              isActive: heartRateStatus,
-              isAbnormal: heartRateStatus &&
-                  (heartRate < kBpmLow || heartRate > kBpmHigh),
-            ),
-          ),
-          const SizedBox(height: 16),
+              const SizedBox(height: 20),
 
-          // 2x2 glass cards grid
-          GridView.count(
-            crossAxisCount: 2,
-            shrinkWrap: true,
-            physics: const NeverScrollableScrollPhysics(),
-            mainAxisSpacing: 12,
-            crossAxisSpacing: 12,
-            childAspectRatio: 1.1,
-            children: [
-              _GlassSensorCard(
-                title: 'Object Temp',
-                value: objectTempStatus ? objectTemp : null,
-                unit: '°C',
-                icon: Icons.thermostat,
-                color: Colors.orange,
-                lastUpdate: lastTempUpdate,
-                isAbnormal: objectTempStatus &&
-                    (objectTemp < kTempLow || objectTemp > kTempHigh),
-                onTap: () => _openHistory(
-                    'Object Temperature', 'temperature_object',
-                    Colors.orange, lastTempUpdate,
-                    low: kTempLow, high: kTempHigh,
-                    current: objectTempStatus ? objectTemp : null),
+              _buildAlertsSection(isDark),
+              const SizedBox(height: 20),
+
+              GridView.count(
+                crossAxisCount: 2,
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                mainAxisSpacing: 12,
+                crossAxisSpacing: 12,
+                childAspectRatio: 1.1,
+                children: [
+                  _GlassSensorCard(
+                    title: 'Object Temp',
+                    value: objectTempStatus ? objectTemp : null,
+                    unit: '°C',
+                    icon: Icons.thermostat,
+                    color: Colors.orange,
+                    lastUpdate: lastTempUpdate,
+                    isAbnormal: objectTempStatus && (objectTemp < kTempLow || objectTemp > kTempHigh),
+                    onTap: () => _openHistory('Object Temperature', 'temperature_object', Colors.orange, lastTempUpdate, low: kTempLow, high: kTempHigh, current: objectTempStatus ? objectTemp : null),
+                  ),
+                  _GlassSensorCard(
+                    title: 'Ambient Temp',
+                    value: ambientTempStatus ? ambientTemp : null,
+                    unit: '°C',
+                    icon: Icons.thermostat,
+                    color: Colors.blue,
+                    lastUpdate: lastTempUpdate,
+                    isAbnormal: false,
+                    onTap: () => _openHistory('Ambient Temperature', 'temperature_ambient', Colors.blue, lastTempUpdate, current: ambientTempStatus ? ambientTemp : null),
+                  ),
+                  _GlassSensorCard(
+                    title: 'Footsteps',
+                    value: footsteps,
+                    unit: 'steps',
+                    icon: Icons.directions_walk,
+                    color: Colors.green,
+                    lastUpdate: lastFootstepsUpdate,
+                    isAbnormal: false,
+                    onTap: () => _openHistory('Footsteps', 'footsteps', Colors.green, lastFootstepsUpdate, current: footsteps.toDouble()),
+                  ),
+                  _GlassSensorCard(
+                    title: 'Fall Alerts',
+                    value: null,
+                    unit: 'events',
+                    icon: Icons.warning,
+                    color: Colors.red,
+                    lastUpdate: lastFallUpdate,
+                    isAbnormal: fallDetected,
+                    onTap: () => _openFallHistory(),
+                  ),
+                ],
               ),
-              _GlassSensorCard(
-                title: 'Ambient Temp',
-                value: ambientTempStatus ? ambientTemp : null,
-                unit: '°C',
-                icon: Icons.thermostat,
-                color: Colors.blue,
-                lastUpdate: lastTempUpdate,
-                isAbnormal: false,
-                onTap: () => _openHistory(
-                    'Ambient Temperature', 'temperature_ambient',
-                    Colors.blue, lastTempUpdate,
-                    current: ambientTempStatus ? ambientTemp : null),
-              ),
-              _GlassSensorCard(
-                title: 'Footsteps',
-                value: footsteps,
-                unit: 'steps',
-                icon: Icons.directions_walk,
-                color: Colors.green,
-                lastUpdate: lastFootstepsUpdate,
-                isAbnormal: false,
-                onTap: () => _openHistory(
-                    'Footsteps', 'footsteps',
-                    Colors.green, lastFootstepsUpdate,
-                    current: footsteps.toDouble()),
-              ),
-              _GlassSensorCard(
-                title: 'Fall Alerts',
-                value: null,
-                unit: 'events',
-                icon: Icons.warning,
-                color: Colors.red,
-                lastUpdate: lastFallUpdate,
-                isAbnormal: fallDetected,
-                onTap: () => _openFallHistory(),
+
+              if (medicineAlarm && !medicineTaken)
+                _GlassBanner(text: 'Medicine time! ${_localCountdown}s left'),
+
+              const SizedBox(height: 30),
+              Text(
+                'created by Amin Abo Elela & Baraa Mky',
+                style: TextStyle(color: Colors.grey.shade400, fontSize: 12, fontStyle: FontStyle.italic),
+                textAlign: TextAlign.center,
               ),
             ],
           ),
-          const SizedBox(height: 12),
-
-          if (medicineAlarm && !medicineTaken)
-            _GlassBanner(
-                text: 'Medicine time! ${_localCountdown}s left'),
-
-          // FIX 3: Footer credit
-          const SizedBox(height: 20),
-          Text(
-            'created by Amin abo Elela',
-            style: TextStyle(
-              color: Colors.grey.shade400,
-              fontSize: 12,
-              fontStyle: FontStyle.italic,
-            ),
-            textAlign: TextAlign.center,
-          ),
-          const SizedBox(height: 8),
-        ],
+        ),
+      ),
+      floatingActionButton: FloatingActionButton(
+        onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const NotificationHistoryPage())),
+        backgroundColor: const Color(0xFF2EE59D),
+        child: const Icon(Icons.history, color: Colors.white),
       ),
     );
   }
 
-  // FIX 5: pass live flags to AlertsPage
-  Widget _buildAlertsView() {
-    return AlertsPage(
-      fallDetected: fallDetected,
-      medicineAlarm: medicineAlarm,
-      emergencyAlarm: emergencyAlarm,
+  Widget _buildAlertsSection(bool isDark) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Alerts Status',
+          style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: isDark ? Colors.white : Colors.black87),
+        ),
+        const SizedBox(height: 12),
+        _AlertStatusCard(title: "Fall Detection", isActive: fallDetected, icon: Icons.warning_amber_rounded),
+        const SizedBox(height: 10),
+        _AlertStatusCard(title: "Medicine Reminder", isActive: medicineAlarm, icon: Icons.medication),
+        const SizedBox(height: 10),
+        _AlertStatusCard(title: "Emergency SOS", isActive: emergencyAlarm, icon: Icons.emergency),
+      ],
     );
   }
 
-  // ----- History navigation -----
-  void _openHistory(
-      String title,
-      String path,
-      Color color,
-      DateTime? lastUpdate, {
-        double? low,
-        double? high,
-        double? current,
-      }) {
+  void _openHistory(String title, String path, Color color, DateTime? lastUpdate, {double? low, double? high, double? current}) {
     Navigator.push(
       context,
       MaterialPageRoute(
         builder: (_) => HistoryPage(
           title: title,
-          unit: path == 'footsteps'
-              ? 'steps'
-              : (path.contains('temp') ? '°C' : 'BPM'),
+          unit: path.contains('temp') ? '°C' : (path == 'footsteps' ? 'steps' : 'BPM'),
           path: path,
           color: color,
           lastUpdate: lastUpdate,
@@ -682,38 +628,55 @@ class _PatientDashboardState extends State<PatientDashboard> {
       ),
     );
   }
+}
 
-  // ----- Bottom navigation (floating pill) -----
-  Widget _buildBottomNav(bool isDark) {
+// ======================= ALERT CARD =======================
+class _AlertStatusCard extends StatelessWidget {
+  final String title;
+  final bool isActive;
+  final IconData icon;
+
+  const _AlertStatusCard({required this.title, required this.isActive, required this.icon});
+
+  @override
+  Widget build(BuildContext context) {
+    final color = isActive ? Colors.red : Colors.green;
     return Container(
-      margin: const EdgeInsets.only(bottom: 12, left: 24, right: 24),
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: isDark ? Colors.white10 : Colors.white.withOpacity(0.7),
-        borderRadius: BorderRadius.circular(32),
-        boxShadow: const [BoxShadow(color: Colors.black12, blurRadius: 10)],
+        color: isActive ? Colors.red.withOpacity(0.15) : Colors.green.withOpacity(0.15),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: color.withOpacity(0.4), width: 1.5),
       ),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(32),
-        child: BottomNavigationBar(
-          currentIndex: _currentTabIndex,
-          onTap: (i) => setState(() => _currentTabIndex = i),
-          backgroundColor: Colors.transparent,
-          elevation: 0,
-          selectedItemColor: const Color(0xFF2EE59D),
-          unselectedItemColor: isDark ? Colors.white54 : Colors.black38,
-          items: const [
-            BottomNavigationBarItem(
-                icon: Icon(Icons.dashboard), label: 'Home'),
-            BottomNavigationBarItem(
-                icon: Icon(Icons.notifications), label: 'Alerts'),
-          ],
-        ),
+      child: Row(
+        children: [
+          Icon(icon, color: color, size: 30),
+          const SizedBox(width: 16),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(title, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+                Text(
+                  isActive ? "ACTIVE" : "Normal",
+                  style: TextStyle(color: color, fontWeight: FontWeight.bold, fontSize: 14),
+                ),
+              ],
+            ),
+          ),
+          if (isActive)
+            const Chip(
+              label: Text('ALERT'),
+              backgroundColor: Colors.red,
+              labelStyle: TextStyle(color: Colors.white, fontSize: 12),
+            ),
+        ],
       ),
     );
   }
 }
 
-// ======================= GLASS SENSOR CARD =======================
+// ======================= OTHER UI WIDGETS =======================
 class _GlassSensorCard extends StatelessWidget {
   final String title;
   final dynamic value;
@@ -738,9 +701,7 @@ class _GlassSensorCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final displayValue = value != null
-        ? (value is double
-        ? (value as double).toStringAsFixed(1)
-        : value.toString())
+        ? (value is double ? value.toStringAsFixed(1) : value.toString())
         : '--';
     return GestureDetector(
       onTap: onTap,
@@ -751,16 +712,12 @@ class _GlassSensorCard extends StatelessWidget {
           child: Container(
             decoration: BoxDecoration(
               gradient: LinearGradient(
-                colors: [
-                  (isAbnormal ? Colors.red : color).withOpacity(0.15),
-                  Colors.white.withOpacity(0.3),
-                ],
+                colors: [(isAbnormal ? Colors.red : color).withOpacity(0.15), Colors.white.withOpacity(0.3)],
                 begin: Alignment.topLeft,
                 end: Alignment.bottomRight,
               ),
               borderRadius: BorderRadius.circular(20),
-              border: Border.all(
-                  color: isAbnormal ? Colors.red : Colors.white24, width: 1),
+              border: Border.all(color: isAbnormal ? Colors.red : Colors.white24, width: 1),
             ),
             padding: const EdgeInsets.all(14),
             child: Column(
@@ -769,12 +726,10 @@ class _GlassSensorCard extends StatelessWidget {
                 Container(
                   padding: const EdgeInsets.all(8),
                   decoration: BoxDecoration(
-                    color:
-                    (isAbnormal ? Colors.red : color).withOpacity(0.2),
+                    color: (isAbnormal ? Colors.red : color).withOpacity(0.2),
                     shape: BoxShape.circle,
                   ),
-                  child: Icon(icon,
-                      color: isAbnormal ? Colors.red : color, size: 22),
+                  child: Icon(icon, color: isAbnormal ? Colors.red : color, size: 22),
                 ),
                 const Spacer(),
                 Text(
@@ -782,21 +737,15 @@ class _GlassSensorCard extends StatelessWidget {
                   style: TextStyle(
                     fontSize: 28,
                     fontWeight: FontWeight.bold,
-                    color: isAbnormal
-                        ? Colors.red
-                        : Theme.of(context).textTheme.bodyLarge!.color,
+                    color: isAbnormal ? Colors.red : null,
                   ),
                 ),
-                Text(unit,
-                    style: const TextStyle(
-                        fontSize: 12, color: Colors.black54)),
-                if (lastUpdate != null) ...[
-                  const SizedBox(height: 4),
+                Text(unit, style: const TextStyle(fontSize: 12, color: Colors.black54)),
+                if (lastUpdate != null)
                   Text(
-                    _fmt(lastUpdate!),
+                    '${lastUpdate!.hour}:${lastUpdate!.minute.toString().padLeft(2, '0')}',
                     style: const TextStyle(fontSize: 10, color: Colors.grey),
                   ),
-                ],
               ],
             ),
           ),
@@ -804,12 +753,8 @@ class _GlassSensorCard extends StatelessWidget {
       ),
     );
   }
-
-  String _fmt(DateTime dt) =>
-      '${dt.hour}:${dt.minute.toString().padLeft(2, '0')}';
 }
 
-// ======================= CIRCULAR HEART RATE =======================
 class _CircularHeartRate extends StatelessWidget {
   final int bpm;
   final bool isActive;
@@ -838,27 +783,15 @@ class _CircularHeartRate extends StatelessWidget {
                 value: progress,
                 strokeWidth: 8,
                 backgroundColor: Colors.grey.shade300,
-                valueColor: AlwaysStoppedAnimation<Color>(
-                    isAbnormal ? Colors.red : const Color(0xFF2EE59D)),
+                valueColor: AlwaysStoppedAnimation<Color>(isAbnormal ? Colors.red : const Color(0xFF2EE59D)),
               ),
             ),
             Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Text(
-                  '$bpm',
-                  style: TextStyle(
-                    fontSize: 42,
-                    fontWeight: FontWeight.w800,
-                    color: isAbnormal ? Colors.red : Colors.black87,
-                  ),
-                ),
-                const Text('BPM',
-                    style: TextStyle(fontSize: 14, color: Colors.grey)),
-                // Small hint that the widget is tappable
-                const SizedBox(height: 4),
-                const Text('tap for history',
-                    style: TextStyle(fontSize: 10, color: Colors.grey)),
+                Text('$bpm', style: TextStyle(fontSize: 42, fontWeight: FontWeight.w800, color: isAbnormal ? Colors.red : Colors.black87)),
+                const Text('BPM', style: TextStyle(fontSize: 14, color: Colors.grey)),
+                const Text('tap for history', style: TextStyle(fontSize: 10, color: Colors.grey)),
               ],
             ),
           ],
@@ -868,7 +801,6 @@ class _CircularHeartRate extends StatelessWidget {
   }
 }
 
-// ======================= GLASS BANNER =======================
 class _GlassBanner extends StatelessWidget {
   final String text;
   const _GlassBanner({required this.text});
@@ -886,9 +818,7 @@ class _GlassBanner extends StatelessWidget {
         children: [
           const Icon(Icons.medication, color: Colors.red),
           const SizedBox(width: 8),
-          Text(text,
-              style: const TextStyle(
-                  color: Colors.red, fontWeight: FontWeight.w600)),
+          Text(text, style: const TextStyle(color: Colors.red, fontWeight: FontWeight.w600)),
         ],
       ),
     );
