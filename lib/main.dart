@@ -582,6 +582,8 @@ class _PatientPageState extends State<PatientPage> {
                   path: "heart_rate",
                   color: Colors.red,
                   lastUpdate: lastHeartRateUpdate,
+                  lowThreshold: kBpmLow.toDouble(),
+                  highThreshold: kBpmHigh.toDouble(),
                 )));
               },
             ),
@@ -603,6 +605,8 @@ class _PatientPageState extends State<PatientPage> {
                   path: "temperature_object",
                   color: Colors.orange,
                   lastUpdate: lastTempUpdate,
+                  lowThreshold: kTempLow,
+                  highThreshold: kTempHigh,
                 )));
               },
             ),
@@ -621,6 +625,8 @@ class _PatientPageState extends State<PatientPage> {
                   path: "temperature_ambient",
                   color: Colors.blue,
                   lastUpdate: lastTempUpdate,
+                  lowThreshold: kTempLow,
+                  highThreshold: kTempHigh,
                 )));
               },
             ),
