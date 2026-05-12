@@ -1,94 +1,68 @@
+import 'dart:async';
+import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
+import 'package:audioplayers/audioplayers.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_database/firebase_database.dart';
-import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'firebase_options.dart';
-import 'dart:async';
-// ---- Phase 2 ----
 import 'history_page.dart';
+import 'alerts_page.dart';   // ← MAKE SURE THIS LINE EXISTS
 import 'storage.dart';
 
-// ============================================================================
-// NOTIFICATION SETUP
-// ============================================================================
+// ======================= NOTIFICATION SETUP =======================
 final FlutterLocalNotificationsPlugin notificationsPlugin =
 FlutterLocalNotificationsPlugin();
 
-// Notification channel ID (Android)
-const String kNotificationChannelId = 'patient_monitor_alerts';
-const String kNotificationChannelName = 'Patient Monitor Alerts';
+const String kNotificationChannelId   = 'mediguard_alerts';
+const String kNotificationChannelName = 'MediGuard Alerts';
 const String kNotificationChannelDesc = 'Vital signs and alarm notifications';
 
-// Thresholds (matching ESP32 defaults)
-const int kBpmLow = 60;
-const int kBpmHigh = 100;
-const double kTempLow = 35.0;
+const int kBpmLow      = 60;
+const int kBpmHigh     = 100;
+const double kTempLow  = 35.0;
 const double kTempHigh = 37.5;
 
-// Unique notification IDs (prevents stacking)
-const int kNotifIdHeartRateLow = 1;
+const int kNotifIdHeartRateLow  = 1;
 const int kNotifIdHeartRateHigh = 2;
-const int kNotifIdTempHigh = 3;
-const int kNotifIdTempLow = 4;
-const int kNotifIdFall = 5;
-const int kNotifIdMedicine = 6;
-const int kNotifIdEmergency = 7;
+const int kNotifIdTempHigh      = 3;
+const int kNotifIdTempLow       = 4;
+const int kNotifIdFall          = 5;
+const int kNotifIdMedicine      = 6;
+const int kNotifIdEmergency     = 7;
 
-// ============================================================================
-// MAIN
-// ============================================================================
+// ======================= MAIN =======================
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-
-  await Firebase.initializeApp(
-    options: DefaultFirebaseOptions.currentPlatform,
-  );
-
+  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
   await _initNotifications();
-
-  runApp(const MyApp());
+  runApp(const MediGuardApp());
 }
 
-// ---------------------------------------------------------------------------
-// Initialize notifications plugin
-// ---------------------------------------------------------------------------
 Future<void> _initNotifications() async {
   const AndroidInitializationSettings androidSettings =
   AndroidInitializationSettings('@mipmap/ic_launcher');
-
-  const DarwinInitializationSettings iosSettings =
-  DarwinInitializationSettings(
+  const DarwinInitializationSettings iosSettings = DarwinInitializationSettings(
     requestAlertPermission: true,
     requestBadgePermission: true,
     requestSoundPermission: true,
   );
-
-  const InitializationSettings initSettings = InitializationSettings(
-    android: androidSettings,
-    iOS: iosSettings,
+  await notificationsPlugin.initialize(
+    const InitializationSettings(android: androidSettings, iOS: iosSettings),
   );
-
-  await notificationsPlugin.initialize(initSettings);
-
-  // Request Android 13+ permission
-  final androidPlugin =
-  notificationsPlugin.resolvePlatformSpecificImplementation<
-      AndroidFlutterLocalNotificationsPlugin>();
+  final androidPlugin = notificationsPlugin
+      .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
   await androidPlugin?.requestNotificationsPermission();
 }
 
-// ---------------------------------------------------------------------------
-// Local function to send a notification
-// ---------------------------------------------------------------------------
+// ======================= NOTIFICATION HELPER =======================
 Future<void> _sendNotification({
   required int id,
   required String title,
   required String body,
   bool highPriority = false,
 }) async {
-  final AndroidNotificationDetails androidDetails =
-  AndroidNotificationDetails(
+  final AndroidNotificationDetails androidDetails = AndroidNotificationDetails(
     kNotificationChannelId,
     kNotificationChannelName,
     channelDescription: kNotificationChannelDesc,
@@ -98,33 +72,24 @@ Future<void> _sendNotification({
     enableVibration: true,
     icon: '@mipmap/ic_launcher',
   );
-
   const DarwinNotificationDetails iosDetails = DarwinNotificationDetails(
     presentAlert: true,
     presentBadge: true,
     presentSound: true,
   );
-
-  final NotificationDetails details = NotificationDetails(
-    android: androidDetails,
-    iOS: iosDetails,
+  await notificationsPlugin.show(
+    id,
+    title,
+    body,
+    NotificationDetails(android: androidDetails, iOS: iosDetails),
   );
-
-  await notificationsPlugin.show(id, title, body, details);
 }
 
-// ============================================================================
-// THRESHOLD CHECKER
-// ============================================================================
+// ======================= THRESHOLD CHECKER =======================
 class ThresholdChecker {
-  // Previous states (prevents duplicate notifications)
-  bool _prevBpmLow = false;
-  bool _prevBpmHigh = false;
-  bool _prevTempHigh = false;
-  bool _prevTempLow = false;
-  bool _prevFall = false;
-  bool _prevMedicine = false;
-  bool _prevEmergency = false;
+  bool _prevBpmLow = false, _prevBpmHigh = false;
+  bool _prevTempHigh = false, _prevTempLow = false;
+  bool _prevFall = false, _prevMedicine = false, _prevEmergency = false;
 
   Future<void> check({
     required int bpm,
@@ -135,116 +100,97 @@ class ThresholdChecker {
     required bool medicineAlarm,
     required bool emergencyAlarm,
   }) async {
-    // ── Heart Rate ──────────────────────────────────────────────
     if (bpmActive && bpm > 0) {
-      final nowLow = bpm < kBpmLow;
+      final nowLow  = bpm < kBpmLow;
       final nowHigh = bpm > kBpmHigh;
-
       if (nowLow && !_prevBpmLow) {
         await _sendNotification(
-          id: kNotifIdHeartRateLow,
-          title: '⚠️ Heart Rate Low',
-          body: 'BPM is $bpm — below $kBpmLow BPM',
-          highPriority: true,
-        );
+            id: kNotifIdHeartRateLow,
+            title: '⚠️ Heart Rate Low',
+            body: 'BPM $bpm < $kBpmLow',
+            highPriority: true);
       } else if (!nowLow && _prevBpmLow) {
         await notificationsPlugin.cancel(kNotifIdHeartRateLow);
       }
-
       if (nowHigh && !_prevBpmHigh) {
         await _sendNotification(
-          id: kNotifIdHeartRateHigh,
-          title: '⚠️ Heart Rate High',
-          body: 'BPM is $bpm — above $kBpmHigh BPM',
-          highPriority: true,
-        );
+            id: kNotifIdHeartRateHigh,
+            title: '⚠️ Heart Rate High',
+            body: 'BPM $bpm > $kBpmHigh',
+            highPriority: true);
       } else if (!nowHigh && _prevBpmHigh) {
         await notificationsPlugin.cancel(kNotifIdHeartRateHigh);
       }
-
-      _prevBpmLow = nowLow;
+      _prevBpmLow  = nowLow;
       _prevBpmHigh = nowHigh;
     }
 
-    // ── Temperature ─────────────────────────────────────────────
     if (tempActive && objectTemp > 0) {
       final nowHigh = objectTemp > kTempHigh;
-      final nowLow = objectTemp < kTempLow;
-
+      final nowLow  = objectTemp < kTempLow;
       if (nowHigh && !_prevTempHigh) {
         await _sendNotification(
-          id: kNotifIdTempHigh,
-          title: '🌡️ High Temperature',
-          body: '${objectTemp.toStringAsFixed(1)}°C — above $kTempHigh°C',
-          highPriority: true,
-        );
+            id: kNotifIdTempHigh,
+            title: '🌡️ High Temperature',
+            body: '${objectTemp.toStringAsFixed(1)}°C > $kTempHigh°C',
+            highPriority: true);
       } else if (!nowHigh && _prevTempHigh) {
         await notificationsPlugin.cancel(kNotifIdTempHigh);
       }
-
       if (nowLow && !_prevTempLow) {
         await _sendNotification(
-          id: kNotifIdTempLow,
-          title: '🌡️ Low Temperature',
-          body: '${objectTemp.toStringAsFixed(1)}°C — below $kTempLow°C',
-          highPriority: true,
-        );
+            id: kNotifIdTempLow,
+            title: '🌡️ Low Temperature',
+            body: '${objectTemp.toStringAsFixed(1)}°C < $kTempLow°C',
+            highPriority: true);
       } else if (!nowLow && _prevTempLow) {
         await notificationsPlugin.cancel(kNotifIdTempLow);
       }
-
       _prevTempHigh = nowHigh;
-      _prevTempLow = nowLow;
+      _prevTempLow  = nowLow;
     }
 
-    // ── Fall Detected ───────────────────────────────────────────
     if (fallDetected && !_prevFall) {
       await _sendNotification(
-        id: kNotifIdFall,
-        title: '🆘 Fall Detected!',
-        body: 'Patient may have fallen. Check immediately.',
-        highPriority: true,
-      );
+          id: kNotifIdFall,
+          title: '🆘 Fall Detected!',
+          body: 'Patient may have fallen.',
+          highPriority: true);
     }
     _prevFall = fallDetected;
 
-    // ── Medicine Alarm ─────────────────────────────────────────
     if (medicineAlarm && !_prevMedicine) {
       await _sendNotification(
-        id: kNotifIdMedicine,
-        title: '💊 Medicine Time',
-        body: 'Please take your medicine now.',
-      );
+          id: kNotifIdMedicine,
+          title: '💊 Medicine Time',
+          body: 'Please take your medicine');
     } else if (!medicineAlarm && _prevMedicine) {
       await notificationsPlugin.cancel(kNotifIdMedicine);
     }
     _prevMedicine = medicineAlarm;
 
-    // ── Emergency SOS ──────────────────────────────────────────
     if (emergencyAlarm && !_prevEmergency) {
       await _sendNotification(
-        id: kNotifIdEmergency,
-        title: '🚨 EMERGENCY SOS!',
-        body: 'Patient triggered SOS button!',
-        highPriority: true,
-      );
+          id: kNotifIdEmergency,
+          title: '🚨 Emergency SOS!',
+          body: 'Patient triggered SOS button!',
+          highPriority: true);
     }
     _prevEmergency = emergencyAlarm;
   }
 }
 
-// ============================================================================
-// APP ROOT
-// ============================================================================
-class MyApp extends StatefulWidget {
-  const MyApp({super.key});
+// ======================= APP ROOT =======================
+// FIX 1: _themeMode state + toggleTheme() instead of ThemeMode.system
+class MediGuardApp extends StatefulWidget {
+  const MediGuardApp({super.key});
 
   @override
-  State<MyApp> createState() => _MyAppState();
+  State<MediGuardApp> createState() => _MediGuardAppState();
 }
 
-class _MyAppState extends State<MyApp> {
-  ThemeMode _themeMode = ThemeMode.light;
+class _MediGuardAppState extends State<MediGuardApp> {
+  ThemeMode _themeMode = ThemeMode.light; // FIX 1: default light
 
   void toggleTheme() {
     setState(() {
@@ -256,120 +202,101 @@ class _MyAppState extends State<MyApp> {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Patient Monitor',
+      title: 'MediGuard',
+      debugShowCheckedModeBanner: false,
       theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: Colors.deepPurple,
-          brightness: Brightness.light,
-        ),
+        brightness: Brightness.light,
+        primaryColor: const Color(0xFF2EE59D),
+        scaffoldBackgroundColor: const Color(0xFFF7F9FC),
+        fontFamily: 'Roboto',
         useMaterial3: true,
       ),
       darkTheme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: Colors.deepPurple,
-          brightness: Brightness.dark,
-        ),
+        brightness: Brightness.dark,
+        primaryColor: const Color(0xFF2EE59D),
+        scaffoldBackgroundColor: const Color(0xFF0B1220),
+        fontFamily: 'Roboto',
         useMaterial3: true,
       ),
-      themeMode: _themeMode,
-      home: PatientPage(onToggleTheme: toggleTheme),
+      themeMode: _themeMode, // FIX 1: use state, not ThemeMode.system
+      home: PatientDashboard(onToggleTheme: toggleTheme), // FIX 1: pass down
     );
   }
 }
 
-// ============================================================================
-// PATIENT PAGE (MAIN UI)
-// ============================================================================
-class PatientPage extends StatefulWidget {
-  final VoidCallback onToggleTheme;
-  const PatientPage({super.key, required this.onToggleTheme});
+// ======================= MAIN DASHBOARD =======================
+class PatientDashboard extends StatefulWidget {
+  final VoidCallback onToggleTheme; // FIX 1: accept callback
+
+  const PatientDashboard({super.key, required this.onToggleTheme});
 
   @override
-  State<PatientPage> createState() => _PatientPageState();
+  State<PatientDashboard> createState() => _PatientDashboardState();
 }
 
-class _PatientPageState extends State<PatientPage> {
+class _PatientDashboardState extends State<PatientDashboard> {
   late final DatabaseReference dbRef;
   final AudioPlayer audioPlayer = AudioPlayer();
   final ThresholdChecker _thresholdChecker = ThresholdChecker();
-
-  // ---- Phase 2: history storage ----
   final HistoryStorage _historyStorage = HistoryStorage();
 
   int _localCountdown = 10;
   Timer? _countdownTimer;
 
-  // Sensor status
-  bool heartRateStatus = true;
-  bool objectTempStatus = true;
-  bool ambientTempStatus = true;
+  bool heartRateStatus = true, objectTempStatus = true, ambientTempStatus = true;
   bool emergencyAlarm = false;
 
-  // Sensor values
-  int heartRate = 0;
-  int footsteps = 0;
-  double objectTemp = 0.0;
-  double ambientTemp = 0.0;
-  int lastHeartRate = 0;
+  int heartRate = 0, footsteps = 0, lastHeartRate = 0;
+  double objectTemp = 0.0, ambientTemp = 0.0;
 
-  // Flags
-  bool fallDetected = false;
-  bool medicineAlarm = false;
-  bool medicineTaken = false;
+  bool fallDetected = false, medicineAlarm = false, medicineTaken = false;
   int medicineTimestamp = 0;
 
-  // Previous flags (for audio triggers only)
-  bool prevFallDetected = false;
-  bool prevMedicineAlarm = false;
+  bool prevFallDetected = false, prevMedicineAlarm = false;
 
-  // Timestamps
-  DateTime? lastUpdate;
-  DateTime? lastHeartRateUpdate;
-  DateTime? lastTempUpdate;
-  DateTime? lastFootstepsUpdate;
-  DateTime? lastFallUpdate;
-  DateTime? lastMedicineUpdate;
-  DateTime? lastEmergencyUpdate;
+  DateTime? lastHeartRateUpdate, lastTempUpdate, lastFootstepsUpdate,
+      lastFallUpdate, lastMedicineUpdate, lastEmergencyUpdate;
 
-  // Audio state
   bool _isAlarmPlaying = false;
   bool _hasEscalatedMedicineAlarm = false;
+
+  int _currentTabIndex = 0;
 
   @override
   void initState() {
     super.initState();
-
     final database = FirebaseDatabase.instanceFor(
       app: Firebase.app(),
       databaseURL:
-      "https://patientmonitor-4f0e8-default-rtdb.europe-west1.firebasedatabase.app",
+      'https://patientmonitor-4f0e8-default-rtdb.europe-west1.firebasedatabase.app',
     );
-
-    dbRef = database.ref("patient_1/live_data");
+    dbRef = database.ref('patient_1/live_data');
 
     dbRef.onValue.listen((event) async {
       final data = event.snapshot.value as Map<dynamic, dynamic>?;
       if (data == null) return;
 
-      bool newFall = data['fall_detected'] ?? false;
-      bool newMedicine = data['medicine_alarm'] ?? false;
-      bool newMedicineTaken = data['medicine_taken'] ?? false;
-      int newMedicineTimestamp = data['medicine_timestamp'] ?? 0;
-      bool newEmergency = data['emergency_alarm'] ?? false;
+      bool newFall             = data['fall_detected']    ?? false;
+      bool newMedicine         = data['medicine_alarm']   ?? false;
+      bool newMedicineTaken    = data['medicine_taken']   ?? false;
+      int  newMedicineTimestamp = data['medicine_timestamp'] ?? 0;
+      bool newEmergency        = data['emergency_alarm']  ?? false;
 
-      int newBpm = data['heart_beat']?['value'] ?? 0;
-      bool newBpmSt = data['heart_beat']?['status'] ?? false;
-      double newObjTemp =
-          (data['temperature']?['object']?['value'] as num?)?.toDouble() ??
-              0.0;
-      bool newTempSt = data['temperature']?['object']?['status'] ?? false;
+      int    newBpm       = data['heart_beat']?['value'] ?? 0;
+      bool   newBpmSt     = data['heart_beat']?['status'] ?? false;
+      double newObjTemp   =
+          (data['temperature']?['object']?['value'] as num?)?.toDouble() ?? 0.0;
+      bool   newTempSt    = data['temperature']?['object']?['status'] ?? false;
+      double newAmbientTemp =
+          (data['temperature']?['ambient']?['value'] as num?)?.toDouble() ?? 0.0;
+      bool   newAmbientSt = data['temperature']?['ambient']?['status'] ?? false;
 
-      // ── Audio triggers ─────────────────────────────────────
+      // Audio triggers
       if (newFall && !prevFallDetected) await _playAlarmOnceFalling();
       if (newMedicine && !prevMedicineAlarm) await _playAlarmOnceStart();
       if (newEmergency && !emergencyAlarm) await _playAlarmOnceEmergency();
 
-      // ── Notification threshold check ────────────────────────
+      // Notification thresholds
       await _thresholdChecker.check(
         bpm: newBpm,
         bpmActive: newBpmSt,
@@ -380,60 +307,61 @@ class _PatientPageState extends State<PatientPage> {
         emergencyAlarm: newEmergency,
       );
 
-      // ── Update state ───────────────────────────────────────
       final now = DateTime.now();
       setState(() {
         heartRateStatus = newBpmSt;
-        heartRate = newBpm;
+        heartRate       = newBpm;
         if (heartRateStatus) lastHeartRate = heartRate;
         if (newBpmSt) lastHeartRateUpdate = now;
 
-        objectTempStatus = newTempSt;
-        objectTemp = newObjTemp;
-        ambientTempStatus =
-            data['temperature']?['ambient']?['status'] ?? false;
-        ambientTemp =
-            (data['temperature']?['ambient']?['value'] as num?)?.toDouble() ??
-                0.0;
+        objectTempStatus  = newTempSt;
+        objectTemp        = newObjTemp;
+        ambientTempStatus = newAmbientSt;
+        ambientTemp       = newAmbientTemp;
         if (newTempSt) lastTempUpdate = now;
 
-        footsteps = data['footsteps']?['value'] ?? 0;
+        footsteps           = data['footsteps']?['value'] ?? 0;
         lastFootstepsUpdate = now;
 
-        fallDetected = newFall;
-        medicineAlarm = newMedicine;
-        medicineTaken = newMedicineTaken;
-        medicineTimestamp = newMedicineTimestamp;
-        emergencyAlarm = newEmergency;
+        fallDetected       = newFall;
+        medicineAlarm      = newMedicine;
+        medicineTaken      = newMedicineTaken;
+        medicineTimestamp  = newMedicineTimestamp;
+        emergencyAlarm     = newEmergency;
 
-        if (newFall) lastFallUpdate = now;
-        if (newMedicine) lastMedicineUpdate = now;
+        if (newFall)      lastFallUpdate      = now;
+        if (newMedicine)  lastMedicineUpdate  = now;
         if (newEmergency) lastEmergencyUpdate = now;
 
-        lastUpdate = now;
-
-        prevFallDetected = newFall;
+        prevFallDetected  = newFall;
         prevMedicineAlarm = newMedicine;
       });
 
-      // ---- Phase 2: save reading to history ----
+      // History logging
       if (newBpmSt && newBpm > 0) {
         _historyStorage.saveReading('heart_rate', newBpm.toDouble());
       }
       if (newTempSt && newObjTemp > 0) {
         _historyStorage.saveReading('temperature_object', newObjTemp);
       }
-      if (ambientTemp > 0) {
-        _historyStorage.saveReading('temperature_ambient', ambientTemp);
+      if (newAmbientSt && newAmbientTemp > 0) {
+        _historyStorage.saveReading('temperature_ambient', newAmbientTemp);
       }
       _historyStorage.saveReading('footsteps', footsteps.toDouble());
 
-      // NEW: Fall event (only when it transitions to active)
       if (newFall && !prevFallDetected) {
         _historyStorage.saveFallEvent();
       }
 
-      // ── Medicine timer ─────────────────────────────────────
+      // FIX 4: Log medicine and emergency events to history
+      if (newMedicine && !prevMedicineAlarm) {
+        _historyStorage.saveReading('medicine_alarm', 1.0);
+      }
+      if (newEmergency && !emergencyAlarm) {
+        _historyStorage.saveReading('emergency_alarm', 1.0);
+      }
+
+      // Medicine countdown
       if (newMedicine && !newMedicineTaken && newMedicineTimestamp > 0) {
         if ((_countdownTimer == null || !_countdownTimer!.isActive) &&
             !_hasEscalatedMedicineAlarm) {
@@ -449,7 +377,7 @@ class _PatientPageState extends State<PatientPage> {
     });
   }
 
-  // ── Audio methods ─────────────────────────────────────────────────
+  // ======================= AUDIO METHODS =======================
   Future<void> _playAlarmOnceFalling() async {
     if (!_isAlarmPlaying) {
       _isAlarmPlaying = true;
@@ -490,6 +418,7 @@ class _PatientPageState extends State<PatientPage> {
     }
   }
 
+  // ======================= COUNTDOWN TIMER =======================
   void _startCountdownTimer() {
     _localCountdown = 10;
     _countdownTimer?.cancel();
@@ -516,10 +445,7 @@ class _PatientPageState extends State<PatientPage> {
   }
 
   void _checkMedicineEscalation() {
-    if (medicineAlarm &&
-        !medicineTaken &&
-        !_hasEscalatedMedicineAlarm &&
-        _localCountdown == 0) {
+    if (medicineAlarm && !medicineTaken && !_hasEscalatedMedicineAlarm && _localCountdown == 0) {
       _hasEscalatedMedicineAlarm = true;
       _playAlarmOnceMissed();
     }
@@ -528,9 +454,7 @@ class _PatientPageState extends State<PatientPage> {
   Future<void> _stopAlarm() async {
     if (_isAlarmPlaying) {
       _isAlarmPlaying = false;
-      try {
-        await audioPlayer.stop();
-      } catch (_) {}
+      try { await audioPlayer.stop(); } catch (_) {}
     }
   }
 
@@ -541,282 +465,340 @@ class _PatientPageState extends State<PatientPage> {
     super.dispose();
   }
 
-  // ── Build method ──────────────────────────────────────────────────
+  // ======================= BUILD =======================
   @override
   Widget build(BuildContext context) {
-    int countdown = 0;
-    if (medicineAlarm && !medicineTaken) {
-      countdown = _localCountdown;
-    }
-
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     return Scaffold(
-      appBar: AppBar(
-        title: const Text("Patient Monitor"),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.brightness_6),
-            onPressed: widget.onToggleTheme,
-          ),
-        ],
+      body: SafeArea(
+        child: _currentTabIndex == 0
+            ? _buildDashboard(isDark)
+            : _buildAlertsView(), // FIX 5: pass live flags
       ),
-      body: Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: ListView(
-          children: [
-            // ---- Phase 2: added onTap to each SensorCard ----
-            SensorCard(
-              title: "Heart Beat",
-              status: true,
-              value: heartRateStatus ? heartRate : lastHeartRate,
-              icon: Icons.favorite,
-              color: Colors.red,
-              unit: "BPM",
-              lastUpdate: lastHeartRateUpdate,
-              warningLow: kBpmLow.toDouble(),
-              warningHigh: kBpmHigh.toDouble(),
-              currentDouble: heartRate.toDouble(),
-              onTap: () {
-                Navigator.push(context, MaterialPageRoute(builder: (_) => HistoryPage(
-                  title: "Heart Rate",
-                  unit: "BPM",
-                  path: "heart_rate",
-                  color: Colors.red,
+      bottomNavigationBar: _buildBottomNav(isDark),
+    );
+  }
+
+  // ----- Dashboard -----
+  Widget _buildDashboard(bool isDark) {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      child: Column(
+        children: [
+          // FIX 1: top row now has the theme toggle button
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                'MediGuard',
+                style: TextStyle(
+                    fontSize: 24,
+                    fontWeight: FontWeight.w700,
+                    color: isDark ? Colors.white : Colors.black87),
+              ),
+              Row(
+                children: [
+                  // FIX 1: Dark/Light toggle button
+                  IconButton(
+                    icon: Icon(
+                      isDark ? Icons.wb_sunny_outlined : Icons.brightness_6,
+                      color: isDark ? Colors.white70 : Colors.black54,
+                    ),
+                    tooltip: 'Toggle theme',
+                    onPressed: widget.onToggleTheme,
+                  ),
+                  IconButton(
+                    icon: Icon(Icons.settings_outlined,
+                        color: isDark ? Colors.white70 : Colors.black54),
+                    onPressed: () {},
+                  ),
+                ],
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+
+          // FIX 2: Heart rate widget is now tappable
+          GestureDetector(
+            onTap: () => Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) => HistoryPage(
+                  title: 'Heart Rate',
+                  unit: 'BPM',
+                  path: 'heart_rate',
+                  color: const Color(0xFF2EE59D),
                   lastUpdate: lastHeartRateUpdate,
                   lowThreshold: kBpmLow.toDouble(),
                   highThreshold: kBpmHigh.toDouble(),
-                )));
-              },
+                  currentValue: heartRateStatus ? heartRate.toDouble() : null,
+                ),
+              ),
             ),
-            SensorCard(
-              title: "Object Temp",
-              status: objectTempStatus,
-              value: objectTemp,
-              icon: Icons.thermostat,
-              color: Colors.orange,
-              unit: "°C",
-              lastUpdate: lastTempUpdate,
-              warningLow: kTempLow,
-              warningHigh: kTempHigh,
-              currentDouble: objectTemp,
-              onTap: () {
-                Navigator.push(context, MaterialPageRoute(builder: (_) => HistoryPage(
-                  title: "Object Temperature",
-                  unit: "°C",
-                  path: "temperature_object",
-                  color: Colors.orange,
-                  lastUpdate: lastTempUpdate,
-                  lowThreshold: kTempLow,
-                  highThreshold: kTempHigh,
-                )));
-              },
+            child: _CircularHeartRate(
+              bpm: heartRateStatus ? heartRate : lastHeartRate,
+              isActive: heartRateStatus,
+              isAbnormal: heartRateStatus &&
+                  (heartRate < kBpmLow || heartRate > kBpmHigh),
             ),
-            SensorCard(
-              title: "Ambient Temp",
-              status: ambientTempStatus,
-              value: ambientTemp,
-              icon: Icons.thermostat,
-              color: Colors.blue,
-              unit: "°C",
-              lastUpdate: lastTempUpdate,
-              onTap: () {
-                Navigator.push(context, MaterialPageRoute(builder: (_) => HistoryPage(
-                  title: "Ambient Temperature",
-                  unit: "°C",
-                  path: "temperature_ambient",
-                  color: Colors.blue,
-                  lastUpdate: lastTempUpdate,
-                  lowThreshold: kTempLow,
-                  highThreshold: kTempHigh,
-                )));
-              },
-            ),
-            SensorCard(
-              title: "Footsteps",
-              status: true,
-              value: footsteps,
-              icon: Icons.directions_walk,
-              color: Colors.green,
-              unit: "steps",
-              lastUpdate: lastFootstepsUpdate,
-              onTap: () {
-                Navigator.push(context, MaterialPageRoute(builder: (_) => HistoryPage(
-                  title: "Footsteps",
-                  unit: "steps",
-                  path: "footsteps",
-                  color: Colors.green,
-                  lastUpdate: lastFootstepsUpdate,
-                )));
-              },
-            ),
-            GestureDetector(
-              onTap: () {
-                Navigator.push(context, MaterialPageRoute(builder: (_) => HistoryPage(
-                  title: "Fall Detected",
-                  unit: "events",
-                  path: "fall_detected",
-                  color: Colors.red,
-                  isFallDetection: true,
-                  lastUpdate: lastFallUpdate,
-                )));
-              },
-              child: FlagCard(
-                title: "Fall Detected",
-                flag: fallDetected,
+          ),
+          const SizedBox(height: 16),
+
+          // 2x2 glass cards grid
+          GridView.count(
+            crossAxisCount: 2,
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            mainAxisSpacing: 12,
+            crossAxisSpacing: 12,
+            childAspectRatio: 1.1,
+            children: [
+              _GlassSensorCard(
+                title: 'Object Temp',
+                value: objectTempStatus ? objectTemp : null,
+                unit: '°C',
+                icon: Icons.thermostat,
+                color: Colors.orange,
+                lastUpdate: lastTempUpdate,
+                isAbnormal: objectTempStatus &&
+                    (objectTemp < kTempLow || objectTemp > kTempHigh),
+                onTap: () => _openHistory(
+                    'Object Temperature', 'temperature_object',
+                    Colors.orange, lastTempUpdate,
+                    low: kTempLow, high: kTempHigh,
+                    current: objectTempStatus ? objectTemp : null),
+              ),
+              _GlassSensorCard(
+                title: 'Ambient Temp',
+                value: ambientTempStatus ? ambientTemp : null,
+                unit: '°C',
+                icon: Icons.thermostat,
+                color: Colors.blue,
+                lastUpdate: lastTempUpdate,
+                isAbnormal: false,
+                onTap: () => _openHistory(
+                    'Ambient Temperature', 'temperature_ambient',
+                    Colors.blue, lastTempUpdate,
+                    current: ambientTempStatus ? ambientTemp : null),
+              ),
+              _GlassSensorCard(
+                title: 'Footsteps',
+                value: footsteps,
+                unit: 'steps',
+                icon: Icons.directions_walk,
+                color: Colors.green,
+                lastUpdate: lastFootstepsUpdate,
+                isAbnormal: false,
+                onTap: () => _openHistory(
+                    'Footsteps', 'footsteps',
+                    Colors.green, lastFootstepsUpdate,
+                    current: footsteps.toDouble()),
+              ),
+              _GlassSensorCard(
+                title: 'Fall Alerts',
+                value: null,
+                unit: 'events',
                 icon: Icons.warning,
                 color: Colors.red,
                 lastUpdate: lastFallUpdate,
+                isAbnormal: fallDetected,
+                onTap: () => _openFallHistory(),
               ),
+            ],
+          ),
+          const SizedBox(height: 12),
+
+          if (medicineAlarm && !medicineTaken)
+            _GlassBanner(
+                text: 'Medicine time! ${_localCountdown}s left'),
+
+          // FIX 3: Footer credit
+          const SizedBox(height: 20),
+          Text(
+            'created by Amin abo Elela',
+            style: TextStyle(
+              color: Colors.grey.shade400,
+              fontSize: 12,
+              fontStyle: FontStyle.italic,
             ),
-            FlagCard(
-              title: "Medicine Alarm",
-              flag: medicineAlarm,
-              icon: Icons.medical_services,
-              color: Colors.purple,
-              lastUpdate: lastMedicineUpdate,
-            ),
-            FlagCard(
-              title: "Emergency Alarm",
-              flag: emergencyAlarm,
-              icon: Icons.sos,
-              color: Colors.red,
-              lastUpdate: lastEmergencyUpdate,
-            ),
-            if (medicineAlarm && !medicineTaken)
-              Padding(
-                padding: const EdgeInsets.only(top: 8.0),
-                child: Text(
-                  countdown > 0
-                      ? "⏳ Time left: $countdown seconds"
-                      : "⚠️ Alarm active!",
-                  style: const TextStyle(fontSize: 16, color: Colors.purple),
-                  textAlign: TextAlign.center,
-                ),
-              ),
-            if (lastUpdate != null)
-              Padding(
-                padding: const EdgeInsets.only(top: 16.0),
-                child: Text(
-                  "Last sync: ${_formatTime(lastUpdate!)}",
-                  style: const TextStyle(fontSize: 14, color: Colors.grey),
-                  textAlign: TextAlign.center,
-                ),
-              ),
-            const SizedBox(height: 20),
-            Text(
-              "created by Amin abo Elela",
-              style: TextStyle(
-                color: Colors.grey.shade400,
-                fontSize: 12,
-                fontStyle: FontStyle.italic,
-              ),
-              textAlign: TextAlign.center,
-            ),
-          ],
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 8),
+        ],
+      ),
+    );
+  }
+
+  // FIX 5: pass live flags to AlertsPage
+  Widget _buildAlertsView() {
+    return AlertsPage(
+      fallDetected: fallDetected,
+      medicineAlarm: medicineAlarm,
+      emergencyAlarm: emergencyAlarm,
+    );
+  }
+
+  // ----- History navigation -----
+  void _openHistory(
+      String title,
+      String path,
+      Color color,
+      DateTime? lastUpdate, {
+        double? low,
+        double? high,
+        double? current,
+      }) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => HistoryPage(
+          title: title,
+          unit: path == 'footsteps'
+              ? 'steps'
+              : (path.contains('temp') ? '°C' : 'BPM'),
+          path: path,
+          color: color,
+          lastUpdate: lastUpdate,
+          lowThreshold: low,
+          highThreshold: high,
+          currentValue: current,
         ),
       ),
     );
   }
 
-  String _formatTime(DateTime dt) {
-    return '${dt.hour.toString().padLeft(2, '0')}:'
-        '${dt.minute.toString().padLeft(2, '0')}:'
-        '${dt.second.toString().padLeft(2, '0')}';
+  void _openFallHistory() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => HistoryPage(
+          title: 'Fall Events',
+          unit: 'events',
+          path: 'fall_detected',
+          color: Colors.red,
+          lastUpdate: lastFallUpdate,
+          isFallDetection: true,
+        ),
+      ),
+    );
+  }
+
+  // ----- Bottom navigation (floating pill) -----
+  Widget _buildBottomNav(bool isDark) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12, left: 24, right: 24),
+      decoration: BoxDecoration(
+        color: isDark ? Colors.white10 : Colors.white.withOpacity(0.7),
+        borderRadius: BorderRadius.circular(32),
+        boxShadow: const [BoxShadow(color: Colors.black12, blurRadius: 10)],
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(32),
+        child: BottomNavigationBar(
+          currentIndex: _currentTabIndex,
+          onTap: (i) => setState(() => _currentTabIndex = i),
+          backgroundColor: Colors.transparent,
+          elevation: 0,
+          selectedItemColor: const Color(0xFF2EE59D),
+          unselectedItemColor: isDark ? Colors.white54 : Colors.black38,
+          items: const [
+            BottomNavigationBarItem(
+                icon: Icon(Icons.dashboard), label: 'Home'),
+            BottomNavigationBarItem(
+                icon: Icon(Icons.notifications), label: 'Alerts'),
+          ],
+        ),
+      ),
+    );
   }
 }
 
-// ============================================================================
-// SENSOR CARD (ENHANCED with onTap for Phase 2)
-// ============================================================================
-class SensorCard extends StatelessWidget {
+// ======================= GLASS SENSOR CARD =======================
+class _GlassSensorCard extends StatelessWidget {
   final String title;
-  final bool status;
   final dynamic value;
+  final String unit;
   final IconData icon;
   final Color color;
-  final String unit;
   final DateTime? lastUpdate;
-  final double? warningLow;
-  final double? warningHigh;
-  final double? currentDouble;
-  // ---- Phase 2: tap callback ----
+  final bool isAbnormal;
   final VoidCallback? onTap;
 
-  const SensorCard({
-    super.key,
+  const _GlassSensorCard({
     required this.title,
-    required this.status,
-    required this.value,
+    this.value,
+    required this.unit,
     required this.icon,
     required this.color,
-    required this.unit,
     this.lastUpdate,
-    this.warningLow,
-    this.warningHigh,
-    this.currentDouble,
-    this.onTap,   // Phase 2
+    this.isAbnormal = false,
+    this.onTap,
   });
-
-  bool get _isOutOfRange {
-    if (currentDouble == null) return false;
-    if (warningLow != null && currentDouble! < warningLow!) return true;
-    if (warningHigh != null && currentDouble! > warningHigh!) return true;
-    return false;
-  }
 
   @override
   Widget build(BuildContext context) {
-    final outOfRange = status && _isOutOfRange;
-
-    return Card(
-      elevation: 4,
-      margin: const EdgeInsets.symmetric(vertical: 8),
-      shape: outOfRange
-          ? RoundedRectangleBorder(
-        side: const BorderSide(color: Colors.red, width: 2.5),
-        borderRadius: BorderRadius.circular(12),
-      )
-          : null,
-      // ---- Phase 2: wrap ListTile with InkWell for tap ----
-      child: InkWell(
-        borderRadius: BorderRadius.circular(12),
-        onTap: onTap,
-        child: ListTile(
-          leading: Icon(icon, color: outOfRange ? Colors.red : color, size: 32),
-          title: Row(
-            children: [
-              Text(title,
-                  style: const TextStyle(fontWeight: FontWeight.bold)),
-              if (outOfRange)
-                const Padding(
-                  padding: EdgeInsets.only(left: 6),
-                  child: Icon(Icons.warning_amber_rounded,
-                      size: 16, color: Colors.red),
-                ),
-            ],
-          ),
-          subtitle: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                status
-                    ? (value is double
-                    ? '${(value as double).toStringAsFixed(1)} $unit'
-                    : '$value $unit')
-                    : 'Sensor is off',
-                style: TextStyle(
-                  color: outOfRange
-                      ? Colors.red
-                      : (status ? Colors.green : Colors.red),
-                  fontSize: 16,
-                  fontWeight: outOfRange ? FontWeight.bold : FontWeight.normal,
-                ),
+    final displayValue = value != null
+        ? (value is double
+        ? (value as double).toStringAsFixed(1)
+        : value.toString())
+        : '--';
+    return GestureDetector(
+      onTap: onTap,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(20),
+        child: BackdropFilter(
+          filter: ui.ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+          child: Container(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: [
+                  (isAbnormal ? Colors.red : color).withOpacity(0.15),
+                  Colors.white.withOpacity(0.3),
+                ],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
               ),
-              if (lastUpdate != null)
-                Text(
-                  'Updated: ${_fmt(lastUpdate!)}',
-                  style: TextStyle(fontSize: 11, color: Colors.grey.shade500),
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(
+                  color: isAbnormal ? Colors.red : Colors.white24, width: 1),
+            ),
+            padding: const EdgeInsets.all(14),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color:
+                    (isAbnormal ? Colors.red : color).withOpacity(0.2),
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(icon,
+                      color: isAbnormal ? Colors.red : color, size: 22),
                 ),
-            ],
+                const Spacer(),
+                Text(
+                  displayValue,
+                  style: TextStyle(
+                    fontSize: 28,
+                    fontWeight: FontWeight.bold,
+                    color: isAbnormal
+                        ? Colors.red
+                        : Theme.of(context).textTheme.bodyLarge!.color,
+                  ),
+                ),
+                Text(unit,
+                    style: const TextStyle(
+                        fontSize: 12, color: Colors.black54)),
+                if (lastUpdate != null) ...[
+                  const SizedBox(height: 4),
+                  Text(
+                    _fmt(lastUpdate!),
+                    style: const TextStyle(fontSize: 10, color: Colors.grey),
+                  ),
+                ],
+              ],
+            ),
           ),
         ),
       ),
@@ -824,68 +806,91 @@ class SensorCard extends StatelessWidget {
   }
 
   String _fmt(DateTime dt) =>
-      '${dt.hour.toString().padLeft(2, '0')}:'
-          '${dt.minute.toString().padLeft(2, '0')}:'
-          '${dt.second.toString().padLeft(2, '0')}';
+      '${dt.hour}:${dt.minute.toString().padLeft(2, '0')}';
 }
 
-// ============================================================================
-// FLAG CARD (unchanged)
-// ============================================================================
-class FlagCard extends StatelessWidget {
-  final String title;
-  final bool flag;
-  final IconData icon;
-  final Color color;
-  final DateTime? lastUpdate;
+// ======================= CIRCULAR HEART RATE =======================
+class _CircularHeartRate extends StatelessWidget {
+  final int bpm;
+  final bool isActive;
+  final bool isAbnormal;
 
-  const FlagCard({
-    super.key,
-    required this.title,
-    required this.flag,
-    required this.icon,
-    required this.color,
-    this.lastUpdate,
+  const _CircularHeartRate({
+    required this.bpm,
+    required this.isActive,
+    this.isAbnormal = false,
   });
 
   @override
   Widget build(BuildContext context) {
-    return Card(
-      elevation: 4,
-      margin: const EdgeInsets.symmetric(vertical: 8),
-      shape: flag
-          ? RoundedRectangleBorder(
-        side: BorderSide(color: color, width: 2.5),
-        borderRadius: BorderRadius.circular(12),
-      )
-          : null,
-      child: ListTile(
-        leading: Icon(icon, color: flag ? color : Colors.grey, size: 32),
-        title: Text(title,
-            style: const TextStyle(fontWeight: FontWeight.bold)),
-        subtitle: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+    final double progress = ((bpm - 40) / 140).clamp(0.0, 1.0);
+    return Center(
+      child: SizedBox(
+        width: 180,
+        height: 180,
+        child: Stack(
+          alignment: Alignment.center,
           children: [
-            Text(
-              flag ? 'Active' : 'Inactive',
-              style: TextStyle(
-                color: flag ? Colors.red : Colors.green,
-                fontSize: 16,
+            SizedBox(
+              width: 160,
+              height: 160,
+              child: CircularProgressIndicator(
+                value: progress,
+                strokeWidth: 8,
+                backgroundColor: Colors.grey.shade300,
+                valueColor: AlwaysStoppedAnimation<Color>(
+                    isAbnormal ? Colors.red : const Color(0xFF2EE59D)),
               ),
             ),
-            if (lastUpdate != null && flag)
-              Text(
-                'Triggered: ${_fmt(lastUpdate!)}',
-                style: TextStyle(fontSize: 11, color: Colors.grey.shade500),
-              ),
+            Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  '$bpm',
+                  style: TextStyle(
+                    fontSize: 42,
+                    fontWeight: FontWeight.w800,
+                    color: isAbnormal ? Colors.red : Colors.black87,
+                  ),
+                ),
+                const Text('BPM',
+                    style: TextStyle(fontSize: 14, color: Colors.grey)),
+                // Small hint that the widget is tappable
+                const SizedBox(height: 4),
+                const Text('tap for history',
+                    style: TextStyle(fontSize: 10, color: Colors.grey)),
+              ],
+            ),
           ],
         ),
       ),
     );
   }
+}
 
-  String _fmt(DateTime dt) =>
-      '${dt.hour.toString().padLeft(2, '0')}:'
-          '${dt.minute.toString().padLeft(2, '0')}:'
-          '${dt.second.toString().padLeft(2, '0')}';
+// ======================= GLASS BANNER =======================
+class _GlassBanner extends StatelessWidget {
+  final String text;
+  const _GlassBanner({required this.text});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.symmetric(vertical: 8),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.red.shade50.withOpacity(0.8),
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.medication, color: Colors.red),
+          const SizedBox(width: 8),
+          Text(text,
+              style: const TextStyle(
+                  color: Colors.red, fontWeight: FontWeight.w600)),
+        ],
+      ),
+    );
+  }
 }

@@ -1,25 +1,19 @@
+import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:fl_chart/fl_chart.dart';
 import 'storage.dart';
 import 'dart:math' as math;
 
-// A data point used internally
-class _DataPoint {
-  final DateTime time;
-  final double value;
-  _DataPoint(this.time, this.value);
-}
-
 class HistoryPage extends StatefulWidget {
   final String title;
   final String unit;
-  final String path;               // e.g. 'heart_rate'
+  final String path;
   final Color color;
   final DateTime? lastUpdate;
-  final bool isFallDetection;      // true → event timeline, no chart
-  final double? lowThreshold;      // below → abnormal
-  final double? highThreshold;     // above → abnormal
-  final double? currentValue;      // latest live value (optional)
+  final bool isFallDetection;
+  final double? lowThreshold;
+  final double? highThreshold;
+  final double? currentValue; // FIX 2: restored parameter
 
   const HistoryPage({
     super.key,
@@ -31,7 +25,7 @@ class HistoryPage extends StatefulWidget {
     this.isFallDetection = false,
     this.lowThreshold,
     this.highThreshold,
-    this.currentValue,
+    this.currentValue, // FIX 2
   });
 
   @override
@@ -42,22 +36,16 @@ class _HistoryPageState extends State<HistoryPage> {
   final HistoryStorage _storage = HistoryStorage();
   bool _loaded = false;
 
-  // All data points (sorted chronologically)
-  List<_DataPoint> _points = [];
+  // FIX 1: _rawData is now populated in _loadData
+  List<Map<String, dynamic>> _rawData = [];
 
-  // Stats
   double _avg = 0, _min = 0, _max = 0, _latest = 0;
   String _status = 'Normal';
-
-  // For line chart
   List<FlSpot> _spots = [];
   double _minY = 0, _maxY = 100;
-
-  // For event list (fall)
-  List<DateTime> _fallTimes = [];
-
-  // View mode (only for numeric metrics)
   bool _showChart = true;
+
+  List<DateTime> _fallTimes = [];
 
   @override
   void initState() {
@@ -66,32 +54,44 @@ class _HistoryPageState extends State<HistoryPage> {
   }
 
   Future<void> _loadData() async {
-    final rawData = await _storage.fetchHistory(widget.path, limit: 300);
-    final points = <_DataPoint>[];
+    final raw = await _storage.fetchHistory(widget.path, limit: 300);
+    final points = <Map<String, dynamic>>[];
 
-    for (final entry in rawData) {
-      final ts = entry['timestamp'] as int?;
-      final val = (entry['value'] as num?)?.toDouble();
+    for (final e in raw) {
+      final ts  = e['timestamp'] as int?;
+      final val = (e['value'] as num?)?.toDouble();
       if (ts != null && val != null) {
-        points.add(_DataPoint(
-            DateTime.fromMillisecondsSinceEpoch(ts * 1000), val));
+        points.add({'timestamp': ts, 'value': val});
       }
     }
-    points.sort((a, b) => a.time.compareTo(b.time));
+    points.sort(
+            (a, b) => (a['timestamp'] as int).compareTo(b['timestamp'] as int));
+
+    // FIX 1: populate _rawData so that _buildListView() is not empty
+    _rawData = List.from(points);
 
     if (widget.isFallDetection) {
-      _fallTimes = points.map((p) => p.time).toList()
+      _fallTimes = points
+          .map((p) => DateTime.fromMillisecondsSinceEpoch(
+          (p['timestamp'] as int) * 1000))
+          .toList()
         ..sort((a, b) => b.compareTo(a)); // newest first
     } else {
-      // Compute stats
       if (points.isNotEmpty) {
-        final values = points.map((p) => p.value);
+        final values =
+        points.map((p) => (p['value'] as num).toDouble()).toList();
         _latest = values.last;
-        _avg = values.reduce((a, b) => a + b) / values.length;
-        _min = values.reduce(math.min);
-        _max = values.reduce(math.max);
+        _avg    = values.reduce((a, b) => a + b) / values.length;
+        _min    = values.reduce(math.min);
+        _max    = values.reduce(math.max);
 
-        // Determine status based on thresholds
+        // FIX 2: if currentValue is supplied, override _latest with the
+        // live sensor reading (more accurate than the last stored point)
+        if (widget.currentValue != null) {
+          _latest = widget.currentValue!;
+        }
+
+        // Determine status using (possibly overridden) _latest
         if (widget.lowThreshold != null && _latest < widget.lowThreshold!) {
           _status = 'Low';
         } else if (widget.highThreshold != null &&
@@ -101,15 +101,14 @@ class _HistoryPageState extends State<HistoryPage> {
           _status = 'Normal';
         }
 
-        // Build spots for chart
         _spots = points
             .map((p) => FlSpot(
-            p.time.millisecondsSinceEpoch.toDouble() / 1000.0, p.value))
+            (p['timestamp'] as int).toDouble(),
+            (p['value'] as num).toDouble()))
             .toList();
 
         _minY = (_min - 5).clamp(0, double.infinity);
-        _maxY = (_max + 5);
-        if (_minY < 0 && widget.unit == 'BPM') _minY = 0;
+        _maxY = _max + 5;
       }
     }
 
@@ -142,111 +141,85 @@ class _HistoryPageState extends State<HistoryPage> {
     );
   }
 
-  // -----------------------------------------------------------
-  // Summary card
-  // -----------------------------------------------------------
-  Widget _buildSummaryCard() {
+  // ===== Glass summary card =====
+  Widget _buildGlassSummaryCard() {
     final bool abnormal = _status != 'Normal';
     final Color statusColor = abnormal ? Colors.red : Colors.green;
-    return Card(
-      margin: const EdgeInsets.all(12),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      elevation: 3,
-      color: abnormal ? Colors.red.shade50 : Colors.green.shade50,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-        child: Row(
-          children: [
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(widget.title,
-                      style: const TextStyle(
-                          fontWeight: FontWeight.bold, fontSize: 16)),
-                  const SizedBox(height: 4),
-                  Text(_status,
-                      style: TextStyle(
-                          color: statusColor,
-                          fontWeight: FontWeight.w600,
-                          fontSize: 14)),
-                  const SizedBox(height: 8),
-                  Text('$_latest ${widget.unit}',
-                      style: const TextStyle(
-                          fontSize: 28, fontWeight: FontWeight.bold)),
-                  if (widget.lastUpdate != null)
-                    Text(
-                      'Last updated: ${_formatDate(widget.lastUpdate!)}',
-                      style: const TextStyle(fontSize: 11, color: Colors.grey),
-                    ),
-                ],
-              ),
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(20),
+      child: BackdropFilter(
+        filter: ui.ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+        child: Container(
+          margin: const EdgeInsets.all(12),
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              colors: [
+                (abnormal ? Colors.red : widget.color).withOpacity(0.2),
+                Colors.white.withOpacity(0.4),
+              ],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
             ),
-            // Mini sparkline on the right
-            if (_spots.length >= 2)
-              SizedBox(
-                width: 80,
-                height: 50,
-                child: LineChart(
-                  LineChartData(
-                    lineBarsData: [
-                      LineChartBarData(
-                        spots: _spots.sublist(
-                            _spots.length - math.min(30, _spots.length)),
-                        isCurved: true,
-                        color: widget.color,
-                        barWidth: 1.5,
-                        dotData: FlDotData(show: false),
-                        belowBarData: BarAreaData(show: false),
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(
+                color: abnormal ? Colors.red : Colors.white30, width: 1),
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(widget.title,
+                        style: const TextStyle(
+                            fontWeight: FontWeight.bold, fontSize: 18)),
+                    const SizedBox(height: 4),
+                    Text(_status,
+                        style: TextStyle(
+                            color: statusColor, fontWeight: FontWeight.w600)),
+                    const SizedBox(height: 8),
+                    Text(
+                      '${_latest.toStringAsFixed(widget.unit == 'steps' ? 0 : 1)} ${widget.unit}',
+                      style: const TextStyle(
+                          fontSize: 32, fontWeight: FontWeight.bold),
+                    ),
+                    if (widget.lastUpdate != null)
+                      Text(
+                        'Last: ${_formatDate(widget.lastUpdate!)}',
+                        style:
+                        const TextStyle(fontSize: 11, color: Colors.grey),
                       ),
-                    ],
-                    titlesData: FlTitlesData(show: false),
-                    gridData: FlGridData(show: false),
-                    borderData: FlBorderData(show: false),
-                    minY: _minY,
-                    maxY: _maxY,
-                  ),
+                  ],
                 ),
               ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  // -----------------------------------------------------------
-  // Statistics panel
-  // -----------------------------------------------------------
-  Widget _buildStatsPanel() {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16),
-      child: Row(
-        children: [
-          _statCard('Avg', _avg),
-          _statCard('Min', _min),
-          _statCard('Max', _max),
-          _statCard('Last', _latest),
-        ],
-      ),
-    );
-  }
-
-  Widget _statCard(String label, double value) {
-    return Expanded(
-      child: Card(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-        child: Padding(
-          padding: const EdgeInsets.all(8.0),
-          child: Column(
-            children: [
-              Text(label,
-                  style: const TextStyle(fontSize: 12, color: Colors.grey)),
-              const SizedBox(height: 4),
-              Text(
-                value.toStringAsFixed(widget.unit == 'steps' ? 0 : 1),
-                style:
-                const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-              ),
+              // Mini sparkline
+              if (_spots.length >= 2)
+                SizedBox(
+                  width: 80,
+                  height: 50,
+                  child: LineChart(
+                    LineChartData(
+                      lineBarsData: [
+                        LineChartBarData(
+                          spots: _spots.sublist(
+                              _spots.length -
+                                  math.min(30, _spots.length)),
+                          isCurved: true,
+                          color: widget.color,
+                          barWidth: 1.5,
+                          dotData: FlDotData(show: false),
+                          belowBarData: BarAreaData(show: false),
+                        ),
+                      ],
+                      titlesData: FlTitlesData(show: false),
+                      gridData: FlGridData(show: false),
+                      borderData: FlBorderData(show: false),
+                      minY: _minY,
+                      maxY: _maxY,
+                    ),
+                  ),
+                ),
             ],
           ),
         ),
@@ -254,33 +227,69 @@ class _HistoryPageState extends State<HistoryPage> {
     );
   }
 
-  // -----------------------------------------------------------
-  // Chart view
-  // -----------------------------------------------------------
-  Widget _buildChartView() {
-    return Column(
-      children: [
-        _buildSummaryCard(),
-        _buildStatsPanel(),
-        const SizedBox(height: 8),
-        Expanded(
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12.0),
-            child: LineChart(_buildLineChartData()),
+  // ===== Stats row =====
+  Widget _buildStatsRow() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 12),
+      child: Row(children: [
+        _statCard('Avg', _avg),
+        _statCard('Min', _min),
+        _statCard('Max', _max),
+        _statCard('Last', _latest),
+      ]),
+    );
+  }
+
+  Widget _statCard(String label, double value) {
+    return Expanded(
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(12),
+        child: BackdropFilter(
+          filter: ui.ImageFilter.blur(sigmaX: 5, sigmaY: 5),
+          child: Container(
+            margin: const EdgeInsets.all(4),
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.2),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Column(children: [
+              Text(label,
+                  style: const TextStyle(
+                      fontSize: 11, color: Colors.black54)),
+              const SizedBox(height: 4),
+              Text(
+                value.toStringAsFixed(widget.unit == 'steps' ? 0 : 1),
+                style: const TextStyle(
+                    fontWeight: FontWeight.bold, fontSize: 16),
+              ),
+            ]),
           ),
         ),
-      ],
+      ),
     );
+  }
+
+  // ===== Chart view =====
+  Widget _buildChartView() {
+    return Column(children: [
+      _buildGlassSummaryCard(),
+      _buildStatsRow(),
+      const SizedBox(height: 8),
+      Expanded(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          child: LineChart(_buildLineChartData()),
+        ),
+      ),
+    ]);
   }
 
   LineChartData _buildLineChartData() {
     return LineChartData(
       minY: _minY,
       maxY: _maxY,
-      gridData: FlGridData(
-        show: true,
-        drawVerticalLine: false,
-      ),
+      gridData: FlGridData(show: true, drawVerticalLine: false),
       titlesData: FlTitlesData(
         leftTitles: AxisTitles(
           sideTitles: SideTitles(
@@ -301,7 +310,7 @@ class _HistoryPageState extends State<HistoryPage> {
                 : null,
             getTitlesWidget: (value, meta) {
               final dt = DateTime.fromMillisecondsSinceEpoch(
-                  (value * 1000).toInt());
+                  value.toInt() * 1000);
               return Text(
                 '${dt.hour}:${dt.minute.toString().padLeft(2, '0')}',
                 style: const TextStyle(fontSize: 10),
@@ -309,8 +318,10 @@ class _HistoryPageState extends State<HistoryPage> {
             },
           ),
         ),
-        topTitles: AxisTitles(sideTitles: SideTitles(showTitles: false)),
-        rightTitles: AxisTitles(sideTitles: SideTitles(showTitles: false)),
+        topTitles:
+        AxisTitles(sideTitles: SideTitles(showTitles: false)),
+        rightTitles:
+        AxisTitles(sideTitles: SideTitles(showTitles: false)),
       ),
       borderData: FlBorderData(show: false),
       lineBarsData: [
@@ -337,15 +348,15 @@ class _HistoryPageState extends State<HistoryPage> {
         touchTooltipData: LineTouchTooltipData(
           getTooltipItems: (touchedSpots) => touchedSpots.map((s) {
             final dt = DateTime.fromMillisecondsSinceEpoch(
-                (s.x * 1000).toInt());
+                s.x.toInt() * 1000);
             return LineTooltipItem(
-              '${dt.hour}:${dt.minute.toString().padLeft(2, '0')}\n${s.y.toStringAsFixed(1)} ${widget.unit}',
+              '${dt.hour}:${dt.minute.toString().padLeft(2, '0')}\n'
+                  '${s.y.toStringAsFixed(1)} ${widget.unit}',
               const TextStyle(color: Colors.white, fontSize: 12),
             );
           }).toList(),
         ),
       ),
-      // Highlight abnormal ranges on the chart
       rangeAnnotations: RangeAnnotations(
         horizontalRangeAnnotations: [
           if (widget.lowThreshold != null)
@@ -365,89 +376,95 @@ class _HistoryPageState extends State<HistoryPage> {
     );
   }
 
-  // -----------------------------------------------------------
-  // List view
-  // -----------------------------------------------------------
+  // ===== List view — FIX 1: now uses populated _rawData =====
   Widget _buildListView() {
-    return Column(
-      children: [
-        _buildSummaryCard(),
-        _buildStatsPanel(),
-        const SizedBox(height: 8),
-        Expanded(
-          child: ListView.builder(
-            itemCount: _points.length,
-            itemBuilder: (context, index) {
-              final point = _points[_points.length - 1 - index]; // newest first
-              bool isAbnormal = false;
-              if (widget.lowThreshold != null &&
-                  point.value < widget.lowThreshold!) isAbnormal = true;
-              if (widget.highThreshold != null &&
-                  point.value > widget.highThreshold!) isAbnormal = true;
-              return Card(
-                margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(8),
-                  side: BorderSide(
-                    color: isAbnormal ? Colors.red : Colors.transparent,
-                    width: 2,
-                  ),
+    return Column(children: [
+      _buildGlassSummaryCard(),
+      _buildStatsRow(),
+      const SizedBox(height: 8),
+      Expanded(
+        child: ListView.builder(
+          itemCount: _rawData.length,
+          itemBuilder: (context, index) {
+            // newest first
+            final entry = _rawData[_rawData.length - 1 - index];
+            final val = (entry['value'] as num).toDouble();
+            final ts  = entry['timestamp'] as int;
+            final dt  = DateTime.fromMillisecondsSinceEpoch(ts * 1000);
+            bool isAbnormal = false;
+            if (widget.lowThreshold != null && val < widget.lowThreshold!) {
+              isAbnormal = true;
+            }
+            if (widget.highThreshold != null && val > widget.highThreshold!) {
+              isAbnormal = true;
+            }
+            return Card(
+              margin: const EdgeInsets.symmetric(
+                  horizontal: 12, vertical: 4),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+                side: BorderSide(
+                  color: isAbnormal ? Colors.red : Colors.transparent,
+                  width: 2,
                 ),
-                child: ListTile(
-                  leading: Icon(
-                    isAbnormal
-                        ? Icons.warning_amber_rounded
-                        : Icons.check_circle_outline,
-                    color: isAbnormal ? Colors.red : Colors.green,
-                  ),
-                  title: Text(
-                    '${point.value.toStringAsFixed(widget.unit == 'steps' ? 0 : 1)} ${widget.unit}',
-                    style: const TextStyle(fontWeight: FontWeight.w600),
-                  ),
-                  subtitle: Text(_formatDate(point.time)),
-                  trailing: isAbnormal
-                      ? Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 8, vertical: 2),
-                    decoration: BoxDecoration(
-                      color: Colors.red.shade50,
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: const Text('Alert',
-                        style: TextStyle(color: Colors.red)),
-                  )
-                      : null,
+              ),
+              child: ListTile(
+                leading: Icon(
+                  isAbnormal
+                      ? Icons.warning_amber_rounded
+                      : Icons.check_circle_outline,
+                  color: isAbnormal ? Colors.red : Colors.green,
                 ),
-              );
-            },
-          ),
+                title: Text(
+                  '${val.toStringAsFixed(widget.unit == 'steps' ? 0 : 1)} ${widget.unit}',
+                  style: const TextStyle(fontWeight: FontWeight.w600),
+                ),
+                subtitle: Text(_formatDate(dt)),
+                trailing: isAbnormal
+                    ? Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 8, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: Colors.red.shade50,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: const Text('Alert',
+                      style: TextStyle(
+                          color: Colors.red, fontSize: 12)),
+                )
+                    : null,
+              ),
+            );
+          },
         ),
-      ],
-    );
+      ),
+    ]);
   }
 
-  // -----------------------------------------------------------
-  // Event timeline (fall, medicine, emergency)
-  // -----------------------------------------------------------
+  // ===== Fall timeline =====
   Widget _buildFallTimeline() {
-    return _fallTimes.isEmpty
-        ? const Center(
-        child: Text('No fall events recorded yet',
-            style: TextStyle(fontSize: 16)))
-        : ListView.builder(
+    if (_fallTimes.isEmpty) {
+      return const Center(
+          child: Text('No fall events recorded yet.',
+              style: TextStyle(fontSize: 16)));
+    }
+    return ListView.builder(
       padding: const EdgeInsets.all(12),
       itemCount: _fallTimes.length,
       itemBuilder: (context, index) {
         final dt = _fallTimes[index];
         return Card(
           margin: const EdgeInsets.symmetric(vertical: 4),
+          shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12)),
           child: ListTile(
             leading: const Icon(Icons.warning, color: Colors.red),
             title: const Text('Fall detected'),
             subtitle: Text(_formatDate(dt)),
             trailing: const Chip(
-              label: Text('Alert', style: TextStyle(color: Colors.red)),
-              backgroundColor: Colors.redAccent,
+              label: Text('Alert',
+                  style: TextStyle(color: Colors.red, fontSize: 12)),
+              backgroundColor: Color(0xFFFFCDD2),
             ),
           ),
         );
@@ -455,7 +472,7 @@ class _HistoryPageState extends State<HistoryPage> {
     );
   }
 
-  String _formatDate(DateTime dt) {
-    return '${dt.day}/${dt.month}/${dt.year} at ${dt.hour}:${dt.minute.toString().padLeft(2, '0')}';
-  }
+  String _formatDate(DateTime dt) =>
+      '${dt.day}/${dt.month}/${dt.year} at '
+          '${dt.hour}:${dt.minute.toString().padLeft(2, '0')}';
 }
