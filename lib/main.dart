@@ -309,17 +309,19 @@ class _PatientDashboardState extends State<PatientDashboard> {
       );
 
       final now = DateTime.now();
+
+      // Force update all values without comparisons
       setState(() {
         heartRateStatus = newBpmSt;
         heartRate = newBpm;
-        if (heartRateStatus) lastHeartRate = heartRate;
-        if (newBpmSt) lastHeartRateUpdate = now;
+        lastHeartRate = newBpm; // Always update lastHeartRate
+        lastHeartRateUpdate = now;
 
         objectTempStatus = newTempSt;
         objectTemp = newObjTemp;
         ambientTempStatus = newAmbientSt;
         ambientTemp = newAmbientTemp;
-        if (newTempSt) lastTempUpdate = now;
+        lastTempUpdate = now;
 
         footsteps = newFootsteps;
         lastFootstepsUpdate = now;
@@ -338,6 +340,14 @@ class _PatientDashboardState extends State<PatientDashboard> {
         prevMedicineAlarm = newMedicine;
       });
 
+      print('[DEBUG] Updated UI - HeartRate: $newBpm, ObjectTemp: $newObjTemp, AmbientTemp: $newAmbientTemp, Footsteps: $newFootsteps');
+
+      // Force a second rebuild to ensure UI updates
+      Future.delayed(const Duration(milliseconds: 50), () {
+        if (mounted) {
+          setState(() {});
+        }
+      });
       // Save to history on every valid reading (not just changes)
       if (newBpmSt && newBpm > 0) {
         _historyStorage.saveReading('heart_rate', newBpm.toDouble());
@@ -485,6 +495,7 @@ class _PatientDashboardState extends State<PatientDashboard> {
 
               // Vitals Grid - moved above alerts
               GridView.count(
+                key: const ValueKey('vitals_grid'),
                 crossAxisCount: 2,
                 shrinkWrap: true,
                 physics: const NeverScrollableScrollPhysics(),
@@ -504,7 +515,7 @@ class _PatientDashboardState extends State<PatientDashboard> {
                         low: kBpmLow.toDouble(), high: kBpmHigh.toDouble(), current: heartRateStatus ? heartRate.toDouble() : null),
                   ),
                   _GlassSensorCard(
-                    title: 'Object Temp',
+                    title: 'Human Temp',
                     value: objectTempStatus ? objectTemp : null,
                     unit: '°C',
                     icon: Icons.thermostat,
