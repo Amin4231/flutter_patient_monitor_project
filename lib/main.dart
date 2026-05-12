@@ -1,3 +1,4 @@
+// main.dart
 import 'dart:async';
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
@@ -10,9 +11,7 @@ import 'history_page.dart';
 import 'storage.dart';
 import 'alerts_page.dart';
 
-// ======================= NOTIFICATION SETUP =======================
-final FlutterLocalNotificationsPlugin notificationsPlugin =
-FlutterLocalNotificationsPlugin();
+final FlutterLocalNotificationsPlugin notificationsPlugin = FlutterLocalNotificationsPlugin();
 
 const String kNotificationChannelId = 'mediguard_alerts';
 const String kNotificationChannelName = 'MediGuard Alerts';
@@ -31,7 +30,6 @@ const int kNotifIdFall = 5;
 const int kNotifIdMedicine = 6;
 const int kNotifIdEmergency = 7;
 
-// ======================= MAIN =======================
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
@@ -40,8 +38,7 @@ void main() async {
 }
 
 Future<void> _initNotifications() async {
-  const AndroidInitializationSettings androidSettings =
-  AndroidInitializationSettings('@mipmap/ic_launcher');
+  const AndroidInitializationSettings androidSettings = AndroidInitializationSettings('@mipmap/ic_launcher');
   const DarwinInitializationSettings iosSettings = DarwinInitializationSettings(
     requestAlertPermission: true,
     requestBadgePermission: true,
@@ -55,7 +52,6 @@ Future<void> _initNotifications() async {
   await androidPlugin?.requestNotificationsPermission();
 }
 
-// ======================= NOTIFICATION HELPER =======================
 Future<void> _sendNotification({
   required int id,
   required String title,
@@ -90,7 +86,6 @@ Future<void> _sendNotification({
   await storage.saveNotification(type: type, title: title, body: body);
 }
 
-// ======================= THRESHOLD CHECKER =======================
 class ThresholdChecker {
   bool _prevBpmLow = false, _prevBpmHigh = false;
   bool _prevTempHigh = false, _prevTempLow = false;
@@ -196,7 +191,6 @@ class ThresholdChecker {
   }
 }
 
-// ======================= APP ROOT =======================
 class MediGuardApp extends StatefulWidget {
   const MediGuardApp({super.key});
 
@@ -238,7 +232,6 @@ class _MediGuardAppState extends State<MediGuardApp> {
   }
 }
 
-// ======================= MAIN DASHBOARD =======================
 class PatientDashboard extends StatefulWidget {
   final VoidCallback onToggleTheme;
 
@@ -299,6 +292,7 @@ class _PatientDashboardState extends State<PatientDashboard> {
       bool newTempSt = data['temperature']?['object']?['status'] ?? false;
       double newAmbientTemp = (data['temperature']?['ambient']?['value'] as num?)?.toDouble() ?? 0.0;
       bool newAmbientSt = data['temperature']?['ambient']?['status'] ?? false;
+      int newFootsteps = data['footsteps']?['value'] ?? 0;
 
       if (newFall && !prevFallDetected) await _playAlarmOnceFalling();
       if (newMedicine && !prevMedicineAlarm) await _playAlarmOnceStart();
@@ -327,7 +321,7 @@ class _PatientDashboardState extends State<PatientDashboard> {
         ambientTemp = newAmbientTemp;
         if (newTempSt) lastTempUpdate = now;
 
-        footsteps = data['footsteps']?['value'] ?? 0;
+        footsteps = newFootsteps;
         lastFootstepsUpdate = now;
 
         fallDetected = newFall;
@@ -344,10 +338,22 @@ class _PatientDashboardState extends State<PatientDashboard> {
         prevMedicineAlarm = newMedicine;
       });
 
-      if (newBpmSt && newBpm > 0) _historyStorage.saveReading('heart_rate', newBpm.toDouble());
-      if (newTempSt && newObjTemp > 0) _historyStorage.saveReading('temperature_object', newObjTemp);
-      if (newAmbientSt && newAmbientTemp > 0) _historyStorage.saveReading('temperature_ambient', newAmbientTemp);
-      _historyStorage.saveReading('footsteps', footsteps.toDouble());
+      // Save to history on every valid reading (not just changes)
+      if (newBpmSt && newBpm > 0) {
+        _historyStorage.saveReading('heart_rate', newBpm.toDouble());
+        print('[DEBUG] Saved heart_rate: $newBpm');
+      }
+      if (newTempSt && newObjTemp > 0) {
+        _historyStorage.saveReading('temperature_object', newObjTemp);
+        print('[DEBUG] Saved temperature_object: $newObjTemp');
+      }
+      if (newAmbientSt && newAmbientTemp > 0) {
+        _historyStorage.saveReading('temperature_ambient', newAmbientTemp);
+        print('[DEBUG] Saved temperature_ambient: $newAmbientTemp');
+      }
+// Save footsteps every time (not just on change)
+      _historyStorage.saveReading('footsteps', newFootsteps.toDouble());
+      print('[DEBUG] Saved footsteps: $newFootsteps');
 
       if (newFall && !prevFallDetected) _historyStorage.saveFallEvent();
       if (newMedicine && !prevMedicineAlarm) _historyStorage.saveReading('medicine_alarm', 1.0);
@@ -367,7 +373,6 @@ class _PatientDashboardState extends State<PatientDashboard> {
     });
   }
 
-  // ======================= AUDIO =======================
   Future<void> _playAlarmOnceFalling() async {
     if (!_isAlarmPlaying) {
       _isAlarmPlaying = true;
@@ -478,41 +483,26 @@ class _PatientDashboardState extends State<PatientDashboard> {
               ),
               const SizedBox(height: 12),
 
-              GestureDetector(
-                onTap: () => Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => HistoryPage(
-                      title: 'Heart Rate',
-                      unit: 'BPM',
-                      path: 'heart_rate',
-                      color: const Color(0xFF2EE59D),
-                      lastUpdate: lastHeartRateUpdate,
-                      lowThreshold: kBpmLow.toDouble(),
-                      highThreshold: kBpmHigh.toDouble(),
-                      currentValue: heartRateStatus ? heartRate.toDouble() : null,
-                    ),
-                  ),
-                ),
-                child: _CircularHeartRate(
-                  bpm: heartRateStatus ? heartRate : lastHeartRate,
-                  isActive: heartRateStatus,
-                  isAbnormal: heartRateStatus && (heartRate < kBpmLow || heartRate > kBpmHigh),
-                ),
-              ),
-              const SizedBox(height: 20),
-
-              _buildAlertsSection(isDark),
-              const SizedBox(height: 20),
-
+              // Vitals Grid - moved above alerts
               GridView.count(
                 crossAxisCount: 2,
                 shrinkWrap: true,
                 physics: const NeverScrollableScrollPhysics(),
                 mainAxisSpacing: 12,
                 crossAxisSpacing: 12,
-                childAspectRatio: 1.1,
+                childAspectRatio: 1,
                 children: [
+                  _GlassSensorCard(
+                    title: 'Heart Rate',
+                    value: heartRateStatus ? heartRate : lastHeartRate,
+                    unit: 'BPM',
+                    icon: Icons.favorite,
+                    color: const Color(0xFF2EE59D),
+                    lastUpdate: lastHeartRateUpdate,
+                    isAbnormal: heartRateStatus && (heartRate < kBpmLow || heartRate > kBpmHigh),
+                    onTap: () => _openHistory('Heart Rate', 'heart_rate', const Color(0xFF2EE59D), lastHeartRateUpdate,
+                        low: kBpmLow.toDouble(), high: kBpmHigh.toDouble(), current: heartRateStatus ? heartRate.toDouble() : null),
+                  ),
                   _GlassSensorCard(
                     title: 'Object Temp',
                     value: objectTempStatus ? objectTemp : null,
@@ -521,7 +511,8 @@ class _PatientDashboardState extends State<PatientDashboard> {
                     color: Colors.orange,
                     lastUpdate: lastTempUpdate,
                     isAbnormal: objectTempStatus && (objectTemp < kTempLow || objectTemp > kTempHigh),
-                    onTap: () => _openHistory('Object Temperature', 'temperature_object', Colors.orange, lastTempUpdate, low: kTempLow, high: kTempHigh, current: objectTempStatus ? objectTemp : null),
+                    onTap: () => _openHistory('Object Temperature', 'temperature_object', Colors.orange, lastTempUpdate,
+                        low: kTempLow, high: kTempHigh, current: objectTempStatus ? objectTemp : null),
                   ),
                   _GlassSensorCard(
                     title: 'Ambient Temp',
@@ -531,7 +522,8 @@ class _PatientDashboardState extends State<PatientDashboard> {
                     color: Colors.blue,
                     lastUpdate: lastTempUpdate,
                     isAbnormal: false,
-                    onTap: () => _openHistory('Ambient Temperature', 'temperature_ambient', Colors.blue, lastTempUpdate, current: ambientTempStatus ? ambientTemp : null),
+                    onTap: () => _openHistory('Ambient Temperature', 'temperature_ambient', Colors.blue, lastTempUpdate,
+                        current: ambientTempStatus ? ambientTemp : null),
                   ),
                   _GlassSensorCard(
                     title: 'Footsteps',
@@ -541,27 +533,23 @@ class _PatientDashboardState extends State<PatientDashboard> {
                     color: Colors.green,
                     lastUpdate: lastFootstepsUpdate,
                     isAbnormal: false,
-                    onTap: () => _openHistory('Footsteps', 'footsteps', Colors.green, lastFootstepsUpdate, current: footsteps.toDouble()),
-                  ),
-                  _GlassSensorCard(
-                    title: 'Fall Alerts',
-                    value: null,
-                    unit: 'events',
-                    icon: Icons.warning,
-                    color: Colors.red,
-                    lastUpdate: lastFallUpdate,
-                    isAbnormal: fallDetected,
-                    onTap: () => _openFallHistory(),
+                    onTap: () => _openHistory('Footsteps', 'footsteps', Colors.green, lastFootstepsUpdate,
+                        current: footsteps.toDouble()),
                   ),
                 ],
               ),
+
+              const SizedBox(height: 20),
+
+              // Alerts Status Section
+              _buildAlertsSection(isDark),
 
               if (medicineAlarm && !medicineTaken)
                 _GlassBanner(text: 'Medicine time! ${_localCountdown}s left'),
 
               const SizedBox(height: 30),
               Text(
-                'created by Amin Abo Elela & Baraa Mky',
+                'MediGuard esp Project',
                 style: TextStyle(color: Colors.grey.shade400, fontSize: 12, fontStyle: FontStyle.italic),
                 textAlign: TextAlign.center,
               ),
@@ -630,13 +618,94 @@ class _PatientDashboardState extends State<PatientDashboard> {
   }
 }
 
-// ======================= ALERT CARD =======================
+// New Fall Detection Card with timestamps
+class _FallDetectionCard extends StatelessWidget {
+  final bool fallDetected;
+  final DateTime? lastFallUpdate;
+  final VoidCallback? onTap;
+
+  const _FallDetectionCard({
+    required this.fallDetected,
+    this.lastFallUpdate,
+    this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final color = fallDetected ? Colors.red : Colors.green;
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: fallDetected ? Colors.red.withOpacity(0.15) : Colors.green.withOpacity(0.15),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: color.withOpacity(0.4), width: 1.5),
+        ),
+        child: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: color.withOpacity(0.2),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(Icons.warning, color: color, size: 28),
+            ),
+            const SizedBox(width: 16),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Fall Detection',
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    fallDetected ? "⚠️ FALL DETECTED" : "✓ No Fall Detected",
+                    style: TextStyle(color: color, fontWeight: FontWeight.bold, fontSize: 14),
+                  ),
+                  if (lastFallUpdate != null && fallDetected) ...[
+                    const SizedBox(height: 4),
+                    Text(
+                      'Detected at: ${_formatTime(lastFallUpdate!)}',
+                      style: const TextStyle(fontSize: 12, color: Colors.grey),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            if (fallDetected)
+              const Chip(
+                label: Text('ALERT'),
+                backgroundColor: Colors.red,
+                labelStyle: TextStyle(color: Colors.white, fontSize: 12),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  String _formatTime(DateTime dt) {
+    return '${dt.hour}:${dt.minute.toString().padLeft(2, '0')} on ${dt.day}/${dt.month}/${dt.year}';
+  }
+}
+
 class _AlertStatusCard extends StatelessWidget {
   final String title;
   final bool isActive;
   final IconData icon;
 
   const _AlertStatusCard({required this.title, required this.isActive, required this.icon});
+
+  String _getStatusText() {
+    if (title == "Fall Detection") {
+      return isActive ? "FALL DETECTED" : "No fall detected";
+    }
+    return isActive ? "ACTIVE" : "Normal";
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -658,7 +727,7 @@ class _AlertStatusCard extends StatelessWidget {
               children: [
                 Text(title, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
                 Text(
-                  isActive ? "ACTIVE" : "Normal",
+                  _getStatusText(),
                   style: TextStyle(color: color, fontWeight: FontWeight.bold, fontSize: 14),
                 ),
               ],
@@ -676,7 +745,6 @@ class _AlertStatusCard extends StatelessWidget {
   }
 }
 
-// ======================= OTHER UI WIDGETS =======================
 class _GlassSensorCard extends StatelessWidget {
   final String title;
   final dynamic value;
@@ -723,15 +791,27 @@ class _GlassSensorCard extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Container(
-                  padding: const EdgeInsets.all(8),
-                  decoration: BoxDecoration(
-                    color: (isAbnormal ? Colors.red : color).withOpacity(0.2),
-                    shape: BoxShape.circle,
-                  ),
-                  child: Icon(icon, color: isAbnormal ? Colors.red : color, size: 22),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: (isAbnormal ? Colors.red : color).withOpacity(0.2),
+                        shape: BoxShape.circle,
+                      ),
+                      child: Icon(icon, color: isAbnormal ? Colors.red : color, size: 22),
+                    ),
+                    if (isAbnormal)
+                      const Icon(Icons.warning_amber, color: Colors.red, size: 20),
+                  ],
                 ),
                 const Spacer(),
+                Text(
+                  title,
+                  style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500, color: Colors.black54),
+                ),
+                const SizedBox(height: 4),
                 Text(
                   displayValue,
                   style: TextStyle(
@@ -741,60 +821,9 @@ class _GlassSensorCard extends StatelessWidget {
                   ),
                 ),
                 Text(unit, style: const TextStyle(fontSize: 12, color: Colors.black54)),
-                if (lastUpdate != null)
-                  Text(
-                    '${lastUpdate!.hour}:${lastUpdate!.minute.toString().padLeft(2, '0')}',
-                    style: const TextStyle(fontSize: 10, color: Colors.grey),
-                  ),
               ],
             ),
           ),
-        ),
-      ),
-    );
-  }
-}
-
-class _CircularHeartRate extends StatelessWidget {
-  final int bpm;
-  final bool isActive;
-  final bool isAbnormal;
-
-  const _CircularHeartRate({
-    required this.bpm,
-    required this.isActive,
-    this.isAbnormal = false,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final double progress = ((bpm - 40) / 140).clamp(0.0, 1.0);
-    return Center(
-      child: SizedBox(
-        width: 180,
-        height: 180,
-        child: Stack(
-          alignment: Alignment.center,
-          children: [
-            SizedBox(
-              width: 160,
-              height: 160,
-              child: CircularProgressIndicator(
-                value: progress,
-                strokeWidth: 8,
-                backgroundColor: Colors.grey.shade300,
-                valueColor: AlwaysStoppedAnimation<Color>(isAbnormal ? Colors.red : const Color(0xFF2EE59D)),
-              ),
-            ),
-            Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text('$bpm', style: TextStyle(fontSize: 42, fontWeight: FontWeight.w800, color: isAbnormal ? Colors.red : Colors.black87)),
-                const Text('BPM', style: TextStyle(fontSize: 14, color: Colors.grey)),
-                const Text('tap for history', style: TextStyle(fontSize: 10, color: Colors.grey)),
-              ],
-            ),
-          ],
         ),
       ),
     );
