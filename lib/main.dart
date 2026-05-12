@@ -428,6 +428,11 @@ class _PatientPageState extends State<PatientPage> {
       }
       _historyStorage.saveReading('footsteps', footsteps.toDouble());
 
+      // NEW: Fall event (only when it transitions to active)
+      if (newFall && !prevFallDetected) {
+        _historyStorage.saveFallEvent();
+      }
+
       // ── Medicine timer ─────────────────────────────────────
       if (newMedicine && !newMedicineTaken && newMedicineTimestamp > 0) {
         if ((_countdownTimer == null || !_countdownTimer!.isActive) &&
@@ -637,12 +642,24 @@ class _PatientPageState extends State<PatientPage> {
                 )));
               },
             ),
-            FlagCard(
-              title: "Fall Detected",
-              flag: fallDetected,
-              icon: Icons.warning,
-              color: Colors.red,
-              lastUpdate: lastFallUpdate,
+            GestureDetector(
+              onTap: () {
+                Navigator.push(context, MaterialPageRoute(builder: (_) => HistoryPage(
+                  title: "Fall Detected",
+                  unit: "events",
+                  path: "fall_detected",
+                  color: Colors.red,
+                  isFallDetection: true,
+                  lastUpdate: lastFallUpdate,
+                )));
+              },
+              child: FlagCard(
+                title: "Fall Detected",
+                flag: fallDetected,
+                icon: Icons.warning,
+                color: Colors.red,
+                lastUpdate: lastFallUpdate,
+              ),
             ),
             FlagCard(
               title: "Medicine Alarm",
