@@ -267,6 +267,11 @@ class _PatientDashboardState extends State<PatientDashboard> {
   bool _isAlarmPlaying = false;
   bool _hasEscalatedMedicineAlarm = false;
 
+  // For daily footsteps tracking
+  int _lastSavedSteps = 0;
+  int _dailySteps = 0;
+  String _lastDate = '';
+
   @override
   void initState() {
     super.initState();
@@ -308,6 +313,27 @@ class _PatientDashboardState extends State<PatientDashboard> {
         emergencyAlarm: newEmergency,
       );
 
+      // Daily footsteps calculation
+      final nowForSteps = DateTime.now();
+      final todayKey = '${nowForSteps.year}-${nowForSteps.month}-${nowForSteps.day}';
+
+      if (_lastDate != todayKey) {
+        _lastSavedSteps = newFootsteps;
+        _dailySteps = 0;
+        _lastDate = todayKey;
+        print('[DEBUG] New day detected - resetting daily steps');
+      } else {
+        if (newFootsteps >= _lastSavedSteps) {
+          _dailySteps = newFootsteps - _lastSavedSteps;
+        } else {
+          _lastSavedSteps = newFootsteps;
+          _dailySteps = 0;
+        }
+      }
+
+      await _historyStorage.saveReading('footsteps', _dailySteps.toDouble());
+      print('[DEBUG] Saved daily steps: $_dailySteps (raw: $newFootsteps)');
+
       final now = DateTime.now();
 
       // Force update all values without comparisons
@@ -322,8 +348,7 @@ class _PatientDashboardState extends State<PatientDashboard> {
         ambientTempStatus = newAmbientSt;
         ambientTemp = newAmbientTemp;
         lastTempUpdate = now;
-
-        footsteps = newFootsteps;
+        footsteps = _dailySteps; // Show daily steps instead of raw
         lastFootstepsUpdate = now;
 
         fallDetected = newFall;
@@ -361,9 +386,6 @@ class _PatientDashboardState extends State<PatientDashboard> {
         _historyStorage.saveReading('temperature_ambient', newAmbientTemp);
         print('[DEBUG] Saved temperature_ambient: $newAmbientTemp');
       }
-// Save footsteps every time (not just on change)
-      _historyStorage.saveReading('footsteps', newFootsteps.toDouble());
-      print('[DEBUG] Saved footsteps: $newFootsteps');
 
       if (newFall && !prevFallDetected) _historyStorage.saveFallEvent();
       if (newMedicine && !prevMedicineAlarm) _historyStorage.saveReading('medicine_alarm', 1.0);
@@ -585,7 +607,12 @@ class _PatientDashboardState extends State<PatientDashboard> {
           style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: isDark ? Colors.white : Colors.black87),
         ),
         const SizedBox(height: 12),
-        _AlertStatusCard(title: "Fall Detection", isActive: fallDetected, icon: Icons.warning_amber_rounded),
+        _AlertStatusCard(
+          title: "Fall Detection",
+          isActive: fallDetected,
+          icon: Icons.warning_amber_rounded,
+          // onTap removed - not clickable anymore
+        ),
         const SizedBox(height: 10),
         _AlertStatusCard(title: "Medicine Reminder", isActive: medicineAlarm, icon: Icons.medication),
         const SizedBox(height: 10),
@@ -708,8 +735,14 @@ class _AlertStatusCard extends StatelessWidget {
   final String title;
   final bool isActive;
   final IconData icon;
+  final VoidCallback? onTap;
 
-  const _AlertStatusCard({required this.title, required this.isActive, required this.icon});
+  const _AlertStatusCard({
+    required this.title,
+    required this.isActive,
+    required this.icon,
+    this.onTap,
+  });
 
   String _getStatusText() {
     if (title == "Fall Detection") {
@@ -721,36 +754,39 @@ class _AlertStatusCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final color = isActive ? Colors.red : Colors.green;
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: isActive ? Colors.red.withOpacity(0.15) : Colors.green.withOpacity(0.15),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: color.withOpacity(0.4), width: 1.5),
-      ),
-      child: Row(
-        children: [
-          Icon(icon, color: color, size: 30),
-          const SizedBox(width: 16),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(title, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
-                Text(
-                  _getStatusText(),
-                  style: TextStyle(color: color, fontWeight: FontWeight.bold, fontSize: 14),
-                ),
-              ],
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: isActive ? Colors.red.withOpacity(0.15) : Colors.green.withOpacity(0.15),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: color.withOpacity(0.4), width: 1.5),
+        ),
+        child: Row(
+          children: [
+            Icon(icon, color: color, size: 30),
+            const SizedBox(width: 16),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(title, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+                  Text(
+                    _getStatusText(),
+                    style: TextStyle(color: color, fontWeight: FontWeight.bold, fontSize: 14),
+                  ),
+                ],
+              ),
             ),
-          ),
-          if (isActive)
-            const Chip(
-              label: Text('ALERT'),
-              backgroundColor: Colors.red,
-              labelStyle: TextStyle(color: Colors.white, fontSize: 12),
-            ),
-        ],
+            if (isActive)
+              const Chip(
+                label: Text('ALERT'),
+                backgroundColor: Colors.red,
+                labelStyle: TextStyle(color: Colors.white, fontSize: 12),
+              ),
+          ],
+        ),
       ),
     );
   }

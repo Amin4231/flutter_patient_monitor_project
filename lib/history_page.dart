@@ -65,16 +65,37 @@ class _HistoryPageState extends State<HistoryPage> {
     }
     points.sort((a, b) => (a['timestamp'] as int).compareTo(b['timestamp'] as int));
 
-    _rawData = List.from(points);
+    // Remove duplicate timestamps (keep only the latest value for same timestamp)
+    final uniquePoints = <Map<String, dynamic>>[];
+    final seenTimestamps = <int>{};
+
+    for (final point in points.reversed) {
+      final ts = point['timestamp'] as int;
+      if (!seenTimestamps.contains(ts)) {
+        seenTimestamps.add(ts);
+        uniquePoints.add(point);
+      }
+    }
+    uniquePoints.sort((a, b) => (a['timestamp'] as int).compareTo(b['timestamp'] as int));
+
+    _rawData = List.from(uniquePoints);
+    print('[DEBUG] Original points: ${points.length}, Unique points: ${uniquePoints.length}');
 
     if (widget.isFallDetection) {
-      _fallTimes = points
-          .map((p) => DateTime.fromMillisecondsSinceEpoch((p['timestamp'] as int) * 1000))
+      print('[DEBUG] Loading fall detection events. Found ${uniquePoints.length} points');
+      _fallTimes = uniquePoints
+          .map((p) {
+        final ts = p['timestamp'] as int;
+        final date = DateTime.fromMillisecondsSinceEpoch(ts * 1000);
+        print('[DEBUG] Fall event at: $date');
+        return date;
+      })
           .toList()
         ..sort((a, b) => b.compareTo(a));
+      print('[DEBUG] Total fall events loaded: ${_fallTimes.length}');
     } else {
-      if (points.isNotEmpty) {
-        final values = points.map((p) => (p['value'] as num).toDouble()).toList();
+      if (uniquePoints.isNotEmpty) {
+        final values = uniquePoints.map((p) => (p['value'] as num).toDouble()).toList();
         _latest = values.last;
         _avg = values.reduce((a, b) => a + b) / values.length;
         _min = values.reduce(math.min);
@@ -92,7 +113,7 @@ class _HistoryPageState extends State<HistoryPage> {
           _status = 'Normal';
         }
 
-        _spots = points
+        _spots = uniquePoints
             .map((p) => FlSpot((p['timestamp'] as int).toDouble(), (p['value'] as num).toDouble()))
             .toList();
 
@@ -102,6 +123,56 @@ class _HistoryPageState extends State<HistoryPage> {
     }
 
     setState(() => _loaded = true);
+  }
+
+  Future<void> _showDeleteDialog() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(widget.isFallDetection ? 'Delete All Fall Events' : 'Delete ${widget.title} History'),
+        content: Text(
+          'Are you sure you want to delete all ${widget.isFallDetection ? 'fall events' : widget.title + ' history'}?\n\nThis action cannot be undone.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: TextButton.styleFrom(foregroundColor: Colors.red),
+            child: const Text('Delete All'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true) {
+      await _deleteHistory();
+    }
+  }
+
+  Future<void> _deleteHistory() async {
+    setState(() => _loaded = false);
+
+    try {
+      await _storage.deleteHistory(widget.path);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('${widget.isFallDetection ? 'Fall events' : widget.title + ' history'} deleted'),
+          backgroundColor: Colors.green,
+        ),
+      );
+      await _loadData();
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Failed to delete history: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      setState(() => _loaded = true);
+    }
   }
 
   @override
@@ -118,6 +189,12 @@ class _HistoryPageState extends State<HistoryPage> {
               tooltip: _showChart ? 'List View' : 'Chart View',
               onPressed: () => setState(() => _showChart = !_showChart),
             ),
+          // Delete button
+          IconButton(
+            icon: const Icon(Icons.delete_outline),
+            tooltip: 'Delete History',
+            onPressed: _showDeleteDialog,
+          ),
         ],
       ),
       body: !_loaded
@@ -168,7 +245,12 @@ class _HistoryPageState extends State<HistoryPage> {
                       '${_latest.toStringAsFixed(widget.unit == 'steps' ? 0 : 1)} ${widget.unit}',
                       style: const TextStyle(fontSize: 32, fontWeight: FontWeight.bold),
                     ),
-                    if (widget.lastUpdate != null)
+                    if (widget.title == 'Footsteps')
+                      const Text(
+                        'steps taken today',
+                        style: TextStyle(fontSize: 12, color: Colors.grey),
+                      ),
+                    if (widget.lastUpdate != null && widget.title != 'Footsteps')
                       Text(
                         'Last: ${_formatDate(widget.lastUpdate!)}',
                         style: const TextStyle(fontSize: 11, color: Colors.grey),
@@ -214,7 +296,7 @@ class _HistoryPageState extends State<HistoryPage> {
         _statCard('Avg', _avg),
         _statCard('Min', _min),
         _statCard('Max', _max),
-        _statCard('Last', _latest),
+        _statCard(widget.title == 'Footsteps' ? 'Today' : 'Last', _latest),
       ]),
     );
   }
@@ -283,10 +365,17 @@ class _HistoryPageState extends State<HistoryPage> {
             interval: _spots.length > 10 ? (_spots.last.x - _spots.first.x) / 5 : null,
             getTitlesWidget: (value, meta) {
               final dt = DateTime.fromMillisecondsSinceEpoch(value.toInt() * 1000);
-              return Text(
-                '${dt.hour}:${dt.minute.toString().padLeft(2, '0')}',
-                style: const TextStyle(fontSize: 10),
-              );
+              if (widget.title == 'Footsteps') {
+                return Text(
+                  '${dt.day}/${dt.month}',
+                  style: const TextStyle(fontSize: 10),
+                );
+              } else {
+                return Text(
+                  '${dt.hour}:${dt.minute.toString().padLeft(2, '0')}',
+                  style: const TextStyle(fontSize: 10),
+                );
+              }
             },
           ),
         ),
@@ -318,11 +407,19 @@ class _HistoryPageState extends State<HistoryPage> {
         touchTooltipData: LineTouchTooltipData(
           getTooltipItems: (touchedSpots) => touchedSpots.map((s) {
             final dt = DateTime.fromMillisecondsSinceEpoch(s.x.toInt() * 1000);
-            return LineTooltipItem(
-              '${dt.hour}:${dt.minute.toString().padLeft(2, '0')}\n'
-                  '${s.y.toStringAsFixed(1)} ${widget.unit}',
-              const TextStyle(color: Colors.white, fontSize: 12),
-            );
+            if (widget.title == 'Footsteps') {
+              return LineTooltipItem(
+                '${dt.day}/${dt.month}/${dt.year}\n'
+                    '${s.y.toStringAsFixed(0)} ${widget.unit}',
+                const TextStyle(color: Colors.white, fontSize: 12),
+              );
+            } else {
+              return LineTooltipItem(
+                '${dt.hour}:${dt.minute.toString().padLeft(2, '0')}\n'
+                    '${s.y.toStringAsFixed(1)} ${widget.unit}',
+                const TextStyle(color: Colors.white, fontSize: 12),
+              );
+            }
           }).toList(),
         ),
       ),

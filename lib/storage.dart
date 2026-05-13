@@ -29,10 +29,12 @@ class HistoryStorage {
 
   Future<void> saveReading(String path, double value) async {
     try {
+      final timestamp = DateTime.now().millisecondsSinceEpoch ~/ 1000;
       await _root.child(path).push().set({
-        'timestamp': DateTime.now().millisecondsSinceEpoch ~/ 1000,
+        'timestamp': timestamp,
         'value': value,
       });
+      print('[DEBUG] saveReading($path) saved value: $value at timestamp: $timestamp');
     } catch (e) {
       print('[HistoryStorage] saveReading($path) failed: $e');
     }
@@ -64,7 +66,21 @@ class HistoryStorage {
   // CONVENIENCE WRAPPERS
   // ──────────────────────────────────────────────────────────────────
 
-  Future<void> saveFallEvent() => saveReading('fall_detected', 1.0);
+  Future<void> saveFallEvent() async {
+    try {
+      final timestamp = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+      await _root.child('fall_detected').push().set({
+        'timestamp': timestamp,
+        'value': 1.0,
+        'event_type': 'fall',
+        'date': DateTime.now().toIso8601String(),
+      });
+      print('[DEBUG] Fall event saved with timestamp: $timestamp');
+    } catch (e) {
+      print('[HistoryStorage] saveFallEvent failed: $e');
+    }
+  }
+
   Future<void> saveMedicineEvent() => saveReading('medicine_alarm', 1.0);
   Future<void> saveEmergencyEvent() => saveReading('emergency_alarm', 1.0);
 
@@ -77,22 +93,61 @@ class HistoryStorage {
         int limit = 500,
       }) async {
     try {
+      print('[DEBUG] fetchHistory: Getting data from path: $path, limit: $limit');
       final snapshot = await _root.child(path).limitToLast(limit).get();
       final data = snapshot.value as Map<dynamic, dynamic>?;
-      if (data == null) return [];
+
+      if (data == null) {
+        print('[DEBUG] fetchHistory: No data found for path: $path');
+        return [];
+      }
+
+      print('[DEBUG] fetchHistory: Found ${data.keys.length} entries for path: $path');
 
       final list = data.entries.map((e) {
         final item = Map<String, dynamic>.from(e.value as Map);
         item['key'] = e.key;
+        print('[DEBUG] fetchHistory: Entry - key: ${e.key}, timestamp: ${item['timestamp']}, value: ${item['value']}');
         return item;
       }).toList();
 
       list.sort((a, b) =>
           (a['timestamp'] as int).compareTo(b['timestamp'] as int));
+
+      print('[DEBUG] fetchHistory: Returning ${list.length} sorted entries for path: $path');
       return list;
     } catch (e) {
       print('[HistoryStorage] fetchHistory($path) failed: $e');
       return [];
+    }
+  }
+
+  // ──────────────────────────────────────────────────────────────────
+  // DELETE
+  // ──────────────────────────────────────────────────────────────────
+
+  Future<void> deleteHistory(String path) async {
+    try {
+      print('[DEBUG] deleteHistory: Deleting all history for path: $path');
+      final snapshot = await _root.child(path).get();
+      final data = snapshot.value as Map<dynamic, dynamic>?;
+
+      if (data == null) {
+        print('[DEBUG] deleteHistory: No data found to delete for path: $path');
+        return;
+      }
+
+      final keys = data.keys.toList();
+      print('[DEBUG] deleteHistory: Deleting ${keys.length} entries from $path');
+
+      for (final key in keys) {
+        await _root.child(path).child(key).remove();
+      }
+
+      print('[DEBUG] deleteHistory: Successfully deleted ${keys.length} entries from $path');
+    } catch (e) {
+      print('[HistoryStorage] deleteHistory($path) failed: $e');
+      rethrow;
     }
   }
 
